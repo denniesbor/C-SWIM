@@ -36,7 +36,7 @@ from shapely.geometry import Point  # Point class
 import geopandas as gpd
 
 # Import custom functions
-from build_admittance_matrix import process_substation_buses, random_admittance_matrix
+from build_admittance_matrix_eo import process_substation_buses, random_admittance_matrix
 
 # print(cp.__version__)
 # print(cp.cuda.runtime.runtimeGetVersion())  # Check runtime version
@@ -85,6 +85,203 @@ def find_substation_name(bus, sub_ref):
 
     # If not found, return None
     return None
+
+
+def main(generate_grid=False):
+
+    # Load the data
+    # Data loc
+    data_loc = Path.cwd() / "data" 
+    results_path = data_loc / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
+
+    # Get substation buses data
+    substation_buses, bus_ids_map, sub_look_up, df_lines, df_substations_info = (
+        process_substation_buses(data_loc)
+    )
+
+    # Load and process transmission line data
+    df_lines.drop(columns=["geometry"], inplace=True)
+    df_lines["name"] = df_lines["name"].astype(np.int32)
+
+    filename = "trans_lines_pickle.pkl"
+    folder = data_loc / "Electric__Power_Transmission_Lines" 
+    transmission_line_path = folder / filename
+    with open(transmission_line_path, "rb") as p:
+        trans_lines_gdf = pickle.load(p)
+
+    trans_lines_gdf["line_id"] = trans_lines_gdf["line_id"].astype(np.int32)
+    df_lines = df_lines.merge(
+        trans_lines_gdf[["line_id", "geometry"]], right_on="line_id", left_on="name"
+    )
+
+    # Create a dictionary for quick substation lookup
+    sub_ref = dict(zip(df_substations_info.name, df_substations_info.buses))
+
+    trafos_data = get_transformer_samples(substation_buses)
+
+    # Load and process GIC data
+    (
+        df_lines,
+        mt_coords,
+        mt_names,
+        e_fields,
+        b_fields,
+        v_fields,
+        # gannon_e,
+    ) = load_and_process_gic_data(data_loc, df_lines, results_path)
+
+    n_nodes = len(sub_look_up)  # Number of nodes in the network
+    # cLear gpu memory"""  """
+
+    # Get 1000 dfs of winding GICs and np gics
+    for i, trafo_data in enumerate(trafos_data):
+
+        # Save the GIC DataFrame
+        filename = data_loc / "admittance_matrix" / f"winding_gic_rand_{i}.csv"
+        
+        if os.path.exists(filename):
+            continue
+
+        logger.info(f"Processing iteration {i}...")
+        # Generate a random admittance matrix
+        logger.info("Generating random admittance matrix...")
+
+        Y_n, Y_e, df_transformers = random_admittance_matrix(
+            substation_buses,
+            trafo_data,
+            bus_ids_map,
+            sub_look_up,
+            df_lines,
+            df_substations_info,
+        )
+
+        # Find indices of rows/columns where all elements are zero in the admittance mat
+        zero_row_indices = np.where(np.all(Y_n == 0, axis=1))[0]  # Zero rows
+        zero_col_indices = np.where(np.all(Y_n == 0, axis=0))[0]  # Zero columns
+
+        # Get the non-zero row/col indices
+        non_zero_indices = np.setdiff1d(np.arange(Y_n.shape[0]), zero_row_indices)
+
+        # Reduce the Y_n and Y_e matrices
+        Y_n = Y_n[np.ix_(non_zero_indices, non_zero_indices)]
+        Y_e = Y_e[np.ix_(non_zero_indices, non_zero_indices)]
+
+        # Y total is sum of earthing and network impedances
+        Y_total = Y_n + Y_e
+        # Get injections data
+        injections_data = get_injection_currents(
+            df_lines, n_nodes, non_zero_indices, sub_look_up, data_loc
+        )
+
+        nodal_voltages = nodal_voltage_calculation(Y_total, injections_data)
+
+        # df_lines_copy = df_lines.copy()
+        # df_lines_copy["from_bus"] = df_lines_copy["from_bus"].apply(
+        #     lambda x: sub_look_up.get(x)
+        # )
+        # df_lines_copy["to_bus"] = df_lines_copy["to_bus"].apply(
+        #     lambda x: sub_look_up.get(x)
+        # )
+
+        # # Calculate GIC for each return period
+        # gic_data = {}
+        # # for period in ["gannon"] + list(return_periods):
+        # for period in list(return_periods):
+        #     # Check if V_gannon exists in nodal voltages
+        #     if f"V_{period}" not in nodal_voltages:
+        #         print("Nodal voltages", f"V_{period}", nodal_voltages)
+        #         continue
+        #     V_nodal = nodal_voltages[f"V_{period}"]
+        #     df_gic = calculate_GIC(
+        #         df_lines_copy, V_nodal, f"V_{period}", non_zero_indices, n_nodes
+        #     )
+        #     gic_data[period] = calc_trafo_gic(
+        #         sub_look_up,
+        #         df_transformers.copy(),
+        #         V_nodal,
+        #         sub_ref,
+        #         n_nodes,
+        #         non_zero_indices,
+        #         f"{period}-year-hazard",
+        #     )
+
+        # # Prepare GIC DataFrames for each period
+        # winding_gic_df_list = []
+        # for period, gic_values in gic_data.items():
+        #     hash_gic_period = [
+        #         (trafo, winding, gic)
+        #         for trafo, windings in gic_values.items()
+        #         for winding, gic in windings.items()
+        #     ]
+        #     winding_gic_df = pd.DataFrame(
+        #         hash_gic_period,
+        #         columns=["Transformer", "Winding", f"{period}-year-hazard A/ph"],
+        #     )
+        #     winding_gic_df_list.append(winding_gic_df)
+
+        # # Merge all GIC dataframes
+        # winding_gic_df = pd.concat(winding_gic_df_list, axis=1).loc[
+        #     :, ~pd.concat(winding_gic_df_list, axis=1).columns.duplicated()
+        # ]
+        # print(len(winding_gic_df))
+        # # Finalize transformer data merge
+        # df_transformers["Transformer"] = df_transformers["name"]
+        # winding_gic_df = winding_gic_df.merge(
+        #     df_transformers[["sub_id", "Transformer", "latitude", "longitude"]],
+        #     on="Transformer",
+        #     how="inner",
+        # )
+
+        # # Save the GIC DataFrame
+        # winding_gic_df.to_csv(filename, index=False)
+
+    #     # Calculate the total GIC for the network
+    #     parallel_gic_calculation_and_processing(
+    #         Y_e, nodal_voltages, non_zero_indices, n_nodes, data_loc, filename
+    #     )
+
+    #     # cLear gpu memory
+
+    #     # Prepare the grid and mask for plotting
+    #     if generate_grid:
+    #         grid_e_100_path = data_loc / "grid_e_100.pkl"
+    #         grid_e_500_path = data_loc / "grid_e_500.pkl"
+    #         grid_e_1000_path = data_loc / "grid_e_1000.pkl"
+    #         grid_e_gannon_path = data_loc / "grid_e_gannon.pkl"
+
+    #         grid_file_paths = [
+    #             grid_e_100_path,
+    #             grid_e_500_path,
+    #             grid_e_1000_path,
+    #             grid_e_gannon_path,
+    #         ]
+
+    #         e_field_100 = e_fields[100]
+    #         e_field_500 = e_fields[500]
+    #         e_field_1000 = e_fields[1000]
+    #         e_field_gannon = gannon_e
+
+    #         e_fields_period = [e_field_100, e_field_500, e_field_1000, e_field_gannon]
+
+    #         # Prepare the transmission lines data for plotting
+    #         for grid_filename, e_field in zip(grid_file_paths, e_fields_period):
+    #             if not os.path.exists(grid_filename):
+    #                 # Generate and save the grid and mask
+    #                 generate_grid_and_mask(
+    #                     e_field,
+    #                     mt_coords,
+    #                     resolution=(500, 1000),
+    #                     filename=grid_filename,
+    #                 )
+
+    #         logging.info("Grid and mask generated and saved.")
+
+    # line_coords_file = data_loc / "line_coords.pkl"
+    # source_crs = "EPSG:4326"
+    # if not os.path.exists(line_coords_file):
+    #     line_coordinates, valid_indices = extract_line_coordinates(
+    #         df_lines, filename=line_coords_file
+    #     )
 
 
 def load_and_process_gic_data(data_loc, df_lines, results_path):
@@ -857,7 +1054,7 @@ def nodal_voltage_calculation(Y_total, injections_data):
     #     return {}
 
 
-def samples(
+def get_transformer_samples(
     substation_buses,
     sample_net_name="sample_network.pkl",
     n_samples=1,
@@ -963,7 +1160,7 @@ def samples(
 # # Create a dictionary for quick substation lookup
 # sub_ref = dict(zip(df_substations_info.name, df_substations_info.buses))
 
-# trafos_data = samples(substation_buses)
+# trafos_data = get_transformer_samples(substation_buses)
 
 # # Load and process GIC data
 # (
@@ -1026,201 +1223,6 @@ def samples(
 
 # nodal_voltages = nodal_voltage_calculation(Y_total, injections_data)
 
-def main(generate_grid=False):
-
-    # Load the data
-    # Data loc
-    data_loc = Path.cwd() / "data" 
-    results_path = data_loc / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
-
-    # Get substation buses data
-    substation_buses, bus_ids_map, sub_look_up, df_lines, df_substations_info = (
-        process_substation_buses(data_loc)
-    )
-
-    # Load and process transmission line data
-    df_lines.drop(columns=["geometry"], inplace=True)
-    df_lines["name"] = df_lines["name"].astype(np.int32)
-
-    filename = "trans_lines_pickle.pkl"
-    folder = data_loc / "Electric__Power_Transmission_Lines" 
-    transmission_line_path = folder / filename
-    with open(transmission_line_path, "rb") as p:
-        trans_lines_gdf = pickle.load(p)
-
-    trans_lines_gdf["line_id"] = trans_lines_gdf["line_id"].astype(np.int32)
-    df_lines = df_lines.merge(
-        trans_lines_gdf[["line_id", "geometry"]], right_on="line_id", left_on="name"
-    )
-
-    # Create a dictionary for quick substation lookup
-    sub_ref = dict(zip(df_substations_info.name, df_substations_info.buses))
-
-    trafos_data = samples(substation_buses)
-
-    # Load and process GIC data
-    (
-        df_lines,
-        mt_coords,
-        mt_names,
-        e_fields,
-        b_fields,
-        v_fields,
-        # gannon_e,
-    ) = load_and_process_gic_data(data_loc, df_lines, results_path)
-
-    n_nodes = len(sub_look_up)  # Number of nodes in the network
-    # cLear gpu memory"""  """
-
-    # Get 1000 dfs of winding GICs and np gics
-    for i, trafo_data in enumerate(trafos_data):
-
-        # Save the GIC DataFrame
-        filename = data_loc / "admittance_matrix" / f"winding_gic_rand_{i}.csv"
-        
-        if os.path.exists(filename):
-            continue
-
-        logger.info(f"Processing iteration {i}...")
-        # Generate a random admittance matrix
-        logger.info("Generating random admittance matrix...")
-
-        Y_n, Y_e, df_transformers = random_admittance_matrix(
-            substation_buses,
-            trafo_data,
-            bus_ids_map,
-            sub_look_up,
-            df_lines,
-            df_substations_info,
-        )
-
-        # Find indices of rows/columns where all elements are zero in the admittance mat
-        zero_row_indices = np.where(np.all(Y_n == 0, axis=1))[0]  # Zero rows
-        zero_col_indices = np.where(np.all(Y_n == 0, axis=0))[0]  # Zero columns
-
-        # Get the non-zero row/col indices
-        non_zero_indices = np.setdiff1d(np.arange(Y_n.shape[0]), zero_row_indices)
-
-        # Reduce the Y_n and Y_e matrices
-        Y_n = Y_n[np.ix_(non_zero_indices, non_zero_indices)]
-        Y_e = Y_e[np.ix_(non_zero_indices, non_zero_indices)]
-
-        # Y total is sum of earthing and network impedances
-        Y_total = Y_n + Y_e
-        # Get injections data
-        injections_data = get_injection_currents(
-            df_lines, n_nodes, non_zero_indices, sub_look_up, data_loc
-        )
-
-        nodal_voltages = nodal_voltage_calculation(Y_total, injections_data)
-
-        # df_lines_copy = df_lines.copy()
-        # df_lines_copy["from_bus"] = df_lines_copy["from_bus"].apply(
-        #     lambda x: sub_look_up.get(x)
-        # )
-        # df_lines_copy["to_bus"] = df_lines_copy["to_bus"].apply(
-        #     lambda x: sub_look_up.get(x)
-        # )
-
-        # # Calculate GIC for each return period
-        # gic_data = {}
-        # # for period in ["gannon"] + list(return_periods):
-        # for period in list(return_periods):
-        #     # Check if V_gannon exists in nodal voltages
-        #     if f"V_{period}" not in nodal_voltages:
-        #         print("Nodal voltages", f"V_{period}", nodal_voltages)
-        #         continue
-        #     V_nodal = nodal_voltages[f"V_{period}"]
-        #     df_gic = calculate_GIC(
-        #         df_lines_copy, V_nodal, f"V_{period}", non_zero_indices, n_nodes
-        #     )
-        #     gic_data[period] = calc_trafo_gic(
-        #         sub_look_up,
-        #         df_transformers.copy(),
-        #         V_nodal,
-        #         sub_ref,
-        #         n_nodes,
-        #         non_zero_indices,
-        #         f"{period}-year-hazard",
-        #     )
-
-        # # Prepare GIC DataFrames for each period
-        # winding_gic_df_list = []
-        # for period, gic_values in gic_data.items():
-        #     hash_gic_period = [
-        #         (trafo, winding, gic)
-        #         for trafo, windings in gic_values.items()
-        #         for winding, gic in windings.items()
-        #     ]
-        #     winding_gic_df = pd.DataFrame(
-        #         hash_gic_period,
-        #         columns=["Transformer", "Winding", f"{period}-year-hazard A/ph"],
-        #     )
-        #     winding_gic_df_list.append(winding_gic_df)
-
-        # # Merge all GIC dataframes
-        # winding_gic_df = pd.concat(winding_gic_df_list, axis=1).loc[
-        #     :, ~pd.concat(winding_gic_df_list, axis=1).columns.duplicated()
-        # ]
-        # print(len(winding_gic_df))
-        # # Finalize transformer data merge
-        # df_transformers["Transformer"] = df_transformers["name"]
-        # winding_gic_df = winding_gic_df.merge(
-        #     df_transformers[["sub_id", "Transformer", "latitude", "longitude"]],
-        #     on="Transformer",
-        #     how="inner",
-        # )
-
-        # # Save the GIC DataFrame
-        # winding_gic_df.to_csv(filename, index=False)
-
-    #     # Calculate the total GIC for the network
-    #     parallel_gic_calculation_and_processing(
-    #         Y_e, nodal_voltages, non_zero_indices, n_nodes, data_loc, filename
-    #     )
-
-    #     # cLear gpu memory
-
-    #     # Prepare the grid and mask for plotting
-    #     if generate_grid:
-    #         grid_e_100_path = data_loc / "grid_e_100.pkl"
-    #         grid_e_500_path = data_loc / "grid_e_500.pkl"
-    #         grid_e_1000_path = data_loc / "grid_e_1000.pkl"
-    #         grid_e_gannon_path = data_loc / "grid_e_gannon.pkl"
-
-    #         grid_file_paths = [
-    #             grid_e_100_path,
-    #             grid_e_500_path,
-    #             grid_e_1000_path,
-    #             grid_e_gannon_path,
-    #         ]
-
-    #         e_field_100 = e_fields[100]
-    #         e_field_500 = e_fields[500]
-    #         e_field_1000 = e_fields[1000]
-    #         e_field_gannon = gannon_e
-
-    #         e_fields_period = [e_field_100, e_field_500, e_field_1000, e_field_gannon]
-
-    #         # Prepare the transmission lines data for plotting
-    #         for grid_filename, e_field in zip(grid_file_paths, e_fields_period):
-    #             if not os.path.exists(grid_filename):
-    #                 # Generate and save the grid and mask
-    #                 generate_grid_and_mask(
-    #                     e_field,
-    #                     mt_coords,
-    #                     resolution=(500, 1000),
-    #                     filename=grid_filename,
-    #                 )
-
-    #         logging.info("Grid and mask generated and saved.")
-
-    # line_coords_file = data_loc / "line_coords.pkl"
-    # source_crs = "EPSG:4326"
-    # if not os.path.exists(line_coords_file):
-    #     line_coordinates, valid_indices = extract_line_coordinates(
-    #         df_lines, filename=line_coords_file
-    #     )
 
 
 if __name__ == "__main__":

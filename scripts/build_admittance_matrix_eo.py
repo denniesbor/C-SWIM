@@ -24,6 +24,8 @@ from scipy.sparse.linalg import spsolve
 
 DATA_LOC = Path("__file__").resolve().parent / "data"
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 def setup_logging():
     """
@@ -235,10 +237,10 @@ def load_and_process_data(DATA_LOC):
     logger.info("Loading and processing data...")
 
     # Load pickled data
-    with open(DATA_LOC / "admittance_matrix" / "unique_sub_voltage_pairs.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "unique_sub_voltage_pairs.pkl", "rb") as f:
         unique_sub_voltage_pairs = pickle.load(f)
 
-    with open(DATA_LOC / "admittance_matrix" / "df_lines_EHV.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "df_lines_EHV.pkl", "rb") as f:
         df_lines_EHV = pickle.load(f)
 
     filename = "trans_lines_pickle.pkl"
@@ -246,13 +248,13 @@ def load_and_process_data(DATA_LOC):
     with open(folder / filename, "rb") as f:
         trans_lines_gdf = pickle.load(f)
 
-    with open(DATA_LOC / "admittance_matrix" / "substation_to_line_voltages.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "substation_to_line_voltages.pkl", "rb") as f:
         substation_to_line_voltages = pickle.load(f)
 
-    with open(DATA_LOC / "admittance_matrix" / "ss_df.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "ss_df.pkl", "rb") as f:
         ss_df = pickle.load(f)
 
-    with open(DATA_LOC / "admittance_matrix" / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
         trans_lines_within_FERC_filtered = pickle.load(f)
 
     # Process data
@@ -299,7 +301,7 @@ def build_substation_buses(
     df_lines_EHV,
     ss_type_dict,
     substation_to_line_voltages,
-):
+    ):
     """
     Build substation buses based on unique substation-voltage pairs and a dataframe of EHV lines.
     Parameters:
@@ -336,9 +338,9 @@ def build_substation_buses(
         if substation not in substation_buses:
 
             # We will focus now on distribution and transmission substations
-            if ss_type not in ["Distribution", "Transmission"]:
+            if ss_type not in ["distribution", "transmission"]:
                 continue
-
+            # print('here')
             # Voltages in substation
             sub_connected_lines = np.array(
                 [float(v) for v in substation_to_line_voltages[substation]]
@@ -596,7 +598,85 @@ def calculate_line_resistances(df, df_ehv, line_resistance,
     return df
 
 
-def random_admittance_matrix(substation_buses, bus_ids_map,
+def get_transformer_samples(
+    substation_buses,
+    sample_net_name="sample_network.pkl",
+    n_samples=2000,
+    seed=42,
+    ):
+    """
+    Generate multiple samples of network configurations:
+    - Each substation gets assigned a transformer count
+    - Each transformer count gets assigned types
+    - Returns a list of DataFrames, each with one sample configuration per substation.
+    """
+
+    # Define file path
+    data_path = DATA_LOC / sample_net_name
+
+    # Check if pre-generated samples exist
+    if os.path.exists(data_path):  # Changed from 'not os.path.exists'
+        with open(data_path, "rb") as f:
+            all_samples = pickle.load(f)
+            logger.info(
+                f"Loaded {len(all_samples)} pre-generated samples from {data_path}"
+            )
+    else:
+        logger.info(f"Generating {n_samples} new samples...")
+        # Set seed for reproducibility
+        np.random.seed(seed)
+
+        # Transformer types and sample storage
+        transformer_types = ["GY-GY", "GY-GY-D", "Auto"]
+        all_samples = []
+
+        for i in range(n_samples):
+            # Create configuration data for each substation in this sample
+            # Transformer generator number
+            transformer_gen_num = 0
+            transformers_data = []
+
+            # Randomly assign transformer count and types for each substation
+            for sub_id, values in substation_buses.items():
+                # Assign a random transformer count (1 to 3)
+                trafo_count = np.random.randint(
+                    1, 4
+                )  # Changed from 4 to match your description
+
+                # Select random transformer types for the count
+                selected_types = list(
+                    np.random.choice(transformer_types, size=trafo_count, replace=True)
+                )
+
+                # Add transformers
+                for transformer_type in selected_types:
+                    transformer_gen_num += 1
+                    transformer_number = (
+                        "T" + "_" + str(sub_id) + "_" + str(transformer_gen_num)
+                    )
+
+                    transformer_data = {
+                        "sub_id": sub_id,
+                        "name": transformer_number,
+                        "type": transformer_type,
+                        "bus1_id": values["hv_bus"],
+                        "bus2_id": values["lv_bus"],
+                    }
+
+                    transformers_data.append(transformer_data)
+
+            # Append the sample as a DataFrame
+            all_samples.append(pd.DataFrame(transformers_data))
+
+        logger.info(f"Generated {len(all_samples)} samples. Saving to {data_path}")
+        # Save the generated samples to a file for reuse
+        with open(data_path, "wb") as f:
+            pickle.dump(all_samples, f)
+
+    return all_samples
+
+
+def random_admittance_matrix(substation_buses, df_transformers, bus_ids_map,
     sub_look_up, df_lines, substations_df, evan_data=False,
     transformer_counts_dict=None):
     # ..................................................
@@ -909,10 +989,12 @@ if __name__ == "__main__":
         )
     )
 
+    df_transformers = get_transformer_samples(substation_buses)
+
     for i in range(100):
         logger.info(f"Building admittance matrix {i + 1}...")
         Y, Y_e = random_admittance_matrix(
-            substation_buses, bus_ids_map, sub_look_up, df_lines, substations_df,
+            substation_buses, df_transformers, bus_ids_map, sub_look_up, df_lines, substations_df,
         )
         admittances.append(Y)
         break
