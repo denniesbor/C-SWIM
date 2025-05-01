@@ -8,10 +8,10 @@ Authors:
 Date:
 - February 2025
 """
+
 import os
 import pickle
 import requests
-import logging
 from pathlib import Path
 import warnings
 from io import StringIO
@@ -23,17 +23,16 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from configs import setup_logger, get_data_dir
+
 warnings.filterwarnings("ignore")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    filename="fetch_substations.log",
-)
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/dl_power_grid.log")
 
 # Define the data path
-data_path = Path("__file__").resolve().parents[1] / "spw-geophy-io" / "data" / "substation_locations"
+data_path = DATA_LOC / "substation_locations"
 
 
 def download_data(url, save_path):
@@ -50,9 +49,9 @@ def download_data(url, save_path):
     if response.status_code == 200:
         with open(save_path, "wb") as f:
             f.write(response.content)
-        logging.info(f"{save_path.name} downloaded successfully.")
+        logger.info(f"{save_path.name} downloaded successfully.")
     else:
-        logging.error(
+        logger.error(
             f"Failed to download {save_path.name}. Status code: {response.status_code}"
         )
 
@@ -98,17 +97,21 @@ def get_pwr_stations(state: str, max_retries=5, retry_delay=10):
                 return substations
         except requests.exceptions.RequestException as e:
             print(f"Error fetching data for {state}: {e}")
-        
-        print(f"Retrying {state} in {retry_delay} seconds... (Attempt {attempt+1}/{max_retries})")
+
+        print(
+            f"Retrying {state} in {retry_delay} seconds... (Attempt {attempt+1}/{max_retries})"
+        )
         time.sleep(retry_delay)
 
-    print(f"Failed to fetch power substations for {state} after {max_retries} attempts.")
+    print(
+        f"Failed to fetch power substations for {state} after {max_retries} attempts."
+    )
     return None
-    
+
 
 def dl_per_state(state):
     """
-    Download OSM data on a per state basis.  
+    Download OSM data on a per state basis.
 
     """
     out_path = data_path / f"{state}.pkl"
@@ -121,24 +124,26 @@ def dl_per_state(state):
     with open(out_path, "wb") as file:
         pickle.dump(results, file)
 
-    return 
+    return
 
 
 def export_all_data(us_states_df):
     """
     Load all state-level pickle files, combine them, and export the result.
-    
+
     Parameters:
         us_states_df (pd.DataFrame): DataFrame containing state names under the column 'stname'.
         data_path (str): Directory where the pickle files are stored.
     """
-    export_path = data_path / "substations.geojson" 
+    export_path = data_path / "substations.geojson"
 
     df_list = []
-    
-    for _, row in tqdm(us_states_df.iterrows(), total=len(us_states_df), desc="Combining States"):
+
+    for _, row in tqdm(
+        us_states_df.iterrows(), total=len(us_states_df), desc="Combining States"
+    ):
         path_in = os.path.join(data_path, f"{row['stname']}.pkl")
-        
+
         if os.path.exists(path_in):
             try:
                 df = pd.read_pickle(path_in)
@@ -146,7 +151,7 @@ def export_all_data(us_states_df):
                     df_list.append(df)
             except Exception as e:
                 print(f"Error loading {path_in}: {e}")
-    
+
     if df_list:
         combined_df = pd.concat(df_list, ignore_index=True)
         combined_df.to_file(export_path, driver="GeoJSON")
@@ -179,12 +184,14 @@ if __name__ == "__main__":
 
     us_states_df = read_text_file(states_data_path)
 
-    for idx, state in tqdm(us_states_df.iterrows(), total=len(us_states_df), desc="Processing States"):
+    for idx, state in tqdm(
+        us_states_df.iterrows(), total=len(us_states_df), desc="Processing States"
+    ):
 
         # if not state['stname'] == 'Rhode Island':
         #     continue
 
         print(f"--Working on {state['stname']}")
-        dl_per_state(state['stname'])
+        dl_per_state(state["stname"])
 
     export_all_data(us_states_df)

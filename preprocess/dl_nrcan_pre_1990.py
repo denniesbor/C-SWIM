@@ -14,14 +14,19 @@ from pathlib import Path
 import tempfile
 import obspy
 import pandas as pd
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 from obspy.clients.fdsn import Client
 from obspy import UTCDateTime
 
+from configs import setup_logger, get_data_dir
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/d_nrcan_mag.log")
+
 # Load the storm data
-data_dir = Path("__file__").resolve().parent.parent / "spw-geophy-io" / "data"
+data_dir = DATA_LOC
 storm_data_loc = data_dir / "kp_ap_indices" / "storm_periods.csv"
 
 storm_df = pd.read_csv(storm_data_loc)
@@ -96,12 +101,12 @@ def download_nrcan_geomag_data(network, station, location, channel, starttime,
                 )
                 df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
                 df.set_index("Timestamp", inplace=True)
-                logging.info(
+                logger.info(
                     f"Successfully downloaded data for {network}.{station}.{location}.{channel}"
                 )
                 return df
             else:
-                logging.warning(
+                logger.warning(
                     f"No data available for {network}.{station}.{location}.{channel} (Attempt {attempt + 1}/{max_retries})"
                 )
                 if attempt < max_retries - 1:
@@ -109,14 +114,14 @@ def download_nrcan_geomag_data(network, station, location, channel, starttime,
                 continue
 
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error downloading data for {network}.{station}.{location}.{channel} (Attempt {attempt + 1}/{max_retries}): {str(e)}"
             )
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)  # Exponential backoff
             continue
 
-    logging.error(
+    logger.error(
         f"Failed to download data for {network}.{station}.{location}.{channel} after {max_retries} attempts"
     )
     return None
@@ -131,12 +136,12 @@ def download_and_process_nrcan_station(network, station, location, channels,
             network, station, location, channel, start_time, end_time
         )
         if data is not None:
-            logging.info(
+            logger.info(
                 f"Successfully downloaded data for {network}.{station}.{location}.{channel}"
             )
             station_data.append(data)
         elif channel in ["UFX", "UFY", "UFZ"]:
-            logging.info(
+            logger.info(
                 f"No data available for {network}.{station}.{location}.{channel}"
             )
             return None
@@ -167,7 +172,7 @@ def process_nrcan_stations(stations, start_time, end_time, nrcan_loc):
                 station, data = result
                 data_dict[station] = data
         except Exception as e:
-            logging.error(f"Error processing station {station}: {str(e)}")
+            logger.error(f"Error processing station {station}: {str(e)}")
 
     return data_dict
 
@@ -187,13 +192,13 @@ def process_and_save_data(observatory_name, data, start_time, base_dir=geomag_fo
 
     if not os.path.exists(file_path):
         data.to_csv(file_path)
-    logging.info(f"Saved processed data for {observatory_name} to {file_path}")
+    logger.info(f"Saved processed data for {observatory_name} to {file_path}")
 
 
 def process_storm_period(row, nrcan_obs, nrcan_loc):
     start_time = row["Start"].strftime("%Y-%m-%dT%H:%M:%S")
     end_time = row["End"].strftime("%Y-%m-%dT%H:%M:%S")
-    logging.info(f"Processing storm period: {start_time} to {end_time}")
+    logger.info(f"Processing storm period: {start_time} to {end_time}")
 
     storm_data = {}
 
@@ -224,20 +229,19 @@ def process_all_storms(storm_df, nrcan_obs, nrcan_loc):
         try:
             result = process_storm_period(row, nrcan_obs, nrcan_loc)
             all_storm_data[index] = result
-            logging.info(f"Processed storm {index}")
+            logger.info(f"Processed storm {index}")
         except Exception as e:
-            logging.error(f"Error processing storm {index}: {str(e)}")
+            logger.error(f"Error processing storm {index}: {str(e)}")
 
     return all_storm_data
 
 
 # %%
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
 
     try:
         all_storm_data = process_all_storms(storm_df, nrcan_obs, nrcan_loc)
     except Exception as e:
-        logging.error(f"An error occurred during processing: {str(e)}")
+        logger.error(f"An error occurred during processing: {str(e)}")
 
 # %%

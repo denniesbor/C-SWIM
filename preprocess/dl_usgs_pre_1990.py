@@ -6,7 +6,6 @@
 # Author: Dennies Bor-GMU
 # ----------------------------------------------------------------------
 import requests
-import logging
 from pathlib import Path
 import multiprocessing
 from requests.exceptions import RequestException
@@ -21,17 +20,16 @@ from scipy import signal
 import xarray as xr
 
 
-# Logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
+from configs import setup_logger, get_data_dir
 
-logging.info("Starting geomagnetic data download and processing")
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/dl_usgs.log")
+
 
 # Load the storm data
-data_dir = Path("__file__").resolve().parent.parent / "spw-geophy-io" / "data"
+data_dir = DATA_LOC
+
 storm_df_path = data_dir / "kp_ap_indices" / "storm_periods.csv"
 geomag_folder = data_dir / "geomag_data"
 
@@ -150,7 +148,7 @@ def fetch_and_process_usgs_data(obsv_name, start_date, end_date, base_dir=geomag
     """
 
     """
-    logging.info(f"Processing {obsv_name}")
+    logger.info(f"Processing {obsv_name}")
     obsv_name = obsv_name.upper()
 
     api_url = f"http://geomag.usgs.gov/ws/data/?id={obsv_name}&type=definitive&starttime={start_date}&endtime={end_date}"
@@ -177,7 +175,7 @@ def fetch_and_process_usgs_data(obsv_name, start_date, end_date, base_dir=geomag
         return obsv_name, data_df
 
     except Exception as e:
-        logging.error(f"Error processing data for {obsv_name}: {e}")
+        logger.error(f"Error processing data for {obsv_name}: {e}")
         return obsv_name, None
 
 
@@ -198,7 +196,7 @@ def process_and_save_data(observatory_name, data, start_time, base_dir=geomag_fo
 
     if not os.path.exists(file_path):
         data.to_csv(file_path)
-        logging.info(f"Saved processed data for {observatory_name} to {file_path}")
+        logger.info(f"Saved processed data for {observatory_name} to {file_path}")
 
 
 def process_storm_period(row, usgs_obs):
@@ -208,7 +206,7 @@ def process_storm_period(row, usgs_obs):
     """
     start_time = row["Start"].strftime("%Y-%m-%dT%H:%M:%S")
     end_time = row["End"].strftime("%Y-%m-%dT%H:%M:%S")
-    logging.info(f"Processing storm period: {start_time} to {end_time}")
+    logger.info(f"Processing storm period: {start_time} to {end_time}")
 
     storm_data = {}
 
@@ -259,4 +257,4 @@ def process_all_storms(storm_df, usgs_obs):
 
 if __name__ == "__main__":
     all_storm_data = process_all_storms(storm_df, usgs_obs)
-    logging.info("Finished processing all storms")
+    logger.info("Finished processing all storms")

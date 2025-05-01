@@ -17,8 +17,13 @@ from datetime import datetime, timedelta
 import multiprocessing
 from functools import partial
 
+from configs import setup_logger, get_data_dir
 
-data_path = Path(__file__).resolve().parent.parent / "data"
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/dl_intermag.log")
+
+data_path = DATA_LOC
 data_path.mkdir(exist_ok=True)
 
 storm_df_path = data_path / "kp_ap_indices" / "storm_periods.csv"
@@ -120,11 +125,11 @@ def upd_op_co(op_count):
 def safemd(folder, op_number, op_count):
     if op_number >= op_count:
         if op_number == 0:
-            print("Creating directories...")
+            logger.info("Creating directories...")
         try:
             os.makedirs(folder, exist_ok=True)
         except OSError:
-            print("Error: unable to create directory: " + str(folder))
+            logger.info("Error: unable to create directory: " + str(folder))
             sys.exit(1)
         op_count = upd_op_co(op_count)
     return op_count
@@ -158,11 +163,11 @@ def getfile(
     if op_number >= op_count:
         # tell the user what's going on
         percent = ((op_number - n_folders) * 100) / n_downloads
-        print("%d%% - downloading file: %s" % (percent, local_file))
+        logger.info("%d%% - downloading file: %s" % (percent, local_file))
 
         # Check if the file already exists, pass
         if os.path.exists(local_file):
-            print("File already exists: " + local_file)  # File already exists
+            logger.info("File already exists: " + local_file)  # File already exists
             op_count = upd_op_co(op_count)
             return op_count
 
@@ -172,7 +177,7 @@ def getfile(
         except FileNotFoundError:
             pass
         except OSError:
-            print("Error: unable to remove file: " + str(local_file))
+            logger.info("Error: unable to remove file: " + str(local_file))
             sys.exit(1)
 
         # handle authentication and proxy server
@@ -215,7 +220,7 @@ def getfile(
             except (URLError, IOError, OSError):
                 n_retries -= 1
         if not success:
-            print("Error: cannot download " + local_file)
+            logger.info("Error: cannot download " + local_file)
             sys.exit(1)
 
         # rename IAGA-2002 files
@@ -243,11 +248,11 @@ def getfile(
             try:
                 os.rename(local_file, new_local_file)
             except (IOError, OSError):
-                print(
+                logger.info(
                     "Warning: unable to rename " + local_file + " to " + new_local_file
                 )
         else:
-            print(
+            logger.info(
                 "Warning: unable to determine data type for renaming of " + local_file
             )
 
@@ -296,7 +301,7 @@ def download_observatory_data(observatory, storm_df, n_folders, n_downloads):
 
             current_date += timedelta(days=1)
 
-    print(f"100% - data download complete for {observatory}")
+    logger.info(f"100% - data download complete for {observatory}")
 
 
 def download_storm_data(storm_df, observatories):

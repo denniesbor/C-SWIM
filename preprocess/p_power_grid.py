@@ -20,7 +20,12 @@ import pandas as pd
 import numpy as np
 import bezpy
 
-DATA_LOC = Path(__file__).resolve().parent.parent / "data"
+
+from configs import setup_logger, get_data_dir
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/p_power_grid.log")
 
 
 def load_and_process_transmission_lines(transmission_lines_path, ferc_gdf_path):

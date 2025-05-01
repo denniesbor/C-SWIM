@@ -1,5 +1,4 @@
 import os
-import logging
 import pandas as pd
 import requests
 from pathlib import Path
@@ -8,12 +7,18 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 
+from configs import setup_logger, get_data_dir
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/identify_storms.log")
+
 # Set up working directories
-data_loc = Path(__file__).resolve().parent.parent / "data"
+data_loc = DATA_LOC
 kp_dst_path = data_loc / "kp_ap_indices"
 kp_dst_path.mkdir(parents=True, exist_ok=True)
 
-print("Working directory:", data_loc)
+logger.info("Working directory:", data_loc)
 
 def download_file(url, file_path):
     """Download a file from a given URL and save it to the specified path."""
@@ -21,7 +26,7 @@ def download_file(url, file_path):
     response.raise_for_status()
     with file_path.open("wb") as f:
         f.write(response.content)
-    print(f"File downloaded and saved to {file_path}")
+    logger.info(f"File downloaded and saved to {file_path}")
 
 
 def parse_combined_kp_ap_file(file_path):
@@ -64,13 +69,13 @@ def parse_combined_kp_ap_file(file_path):
 
 
 def analyze_kp_ap_data(df):
-    print("Data range:", df["Datetime"].min(), "to", df["Datetime"].max())
-    print("\nBasic statistics:")
-    print(df[["Kp", "Kp_0to9", "Ap"]].describe())
-    print("\nDates with highest Ap index:")
-    print(df.nlargest(10, "Ap")[["Datetime", "Ap", "Kp"]])
-    print("\nDistribution of Kp values (0-9 scale):")
-    print(df["Kp_0to9"].value_counts().sort_index())
+    logger.info("Data range:", df["Datetime"].min(), "to", df["Datetime"].max())
+    logger.info("\nBasic statistics:")
+    logger.info(df[["Kp", "Kp_0to9", "Ap"]].describe())
+    logger.info("\nDates with highest Ap index:")
+    logger.info(df.nlargest(10, "Ap")[["Datetime", "Ap", "Kp"]])
+    logger.info("\nDistribution of Kp values (0-9 scale):")
+    logger.info(df["Kp_0to9"].value_counts().sort_index())
 
 
 def parse_dst_file(file_path):
@@ -239,7 +244,7 @@ def main():
 
     kp_df = parse_combined_kp_ap_file(kp_file_path)
     analyze_kp_ap_data(kp_df)
-    print("\nKP Analysis complete. Check the current directory for output plots.")
+    logger.info("\nKP Analysis complete. Check the current directory for output plots.")
 
     # The DST data has been downloaded and manually saved to a file named 'dst_data.txt'.
     # The data is downloaded from Kyoto World Data Center for Geomagnetism.
@@ -252,9 +257,9 @@ def main():
     # Set Datetime as index for KP data
     kp_df.set_index("Datetime", inplace=True)
 
-    print("\nData processing complete.")
-    print("KP data shape:", kp_df.shape)
-    print("DST data shape:", dst_df.shape)
+    logger.info("\nData processing complete.")
+    logger.info("KP data shape:", kp_df.shape)
+    logger.info("DST data shape:", dst_df.shape)
 
     # You can add further analysis or plotting here
     storm_df = identify_storms(dst_df, kp_df)
@@ -277,7 +282,7 @@ def main():
     # Parse out the kp file
     kp_df = parse_combined_kp_ap_file(kp_file_path)
     analyze_kp_ap_data(kp_df)
-    print("\nKP Analysis complete. Check the current directory for output plots.")
+    logger.info("\nKP Analysis complete. Check the current directory for output plots.")
 
     # The DST data has been downloaded and manually saved to a file named 'dst_data.txt'.
     # The data is downloaded from Kyoto World Data Center for Geomagnetism.
@@ -307,7 +312,7 @@ def main():
         dst_min = dsts.idxmin()
         storm_time_df.loc[dst_min-delta_t:dst_min+delta_t,'storm'] = True
         curr_dst = storm_time_df.loc[dst_min,'DST']
-        #print(dst_min, curr_dst)
+        #logger.info(dst_min, curr_dst)
         list_of_times.append(dst_min)
         
     curr_kp = 10
@@ -316,10 +321,10 @@ def main():
         kp_max = kp.idxmax()
         storm_time_df.loc[kp_max-delta_t:kp_max+delta_t,'storm'] = True
         curr_kp = storm_time_df.loc[kp_max,'Kp']
-        #print(dst_min, curr_dst)
+        #logger.info(dst_min, curr_dst)
         list_of_times.append(kp_max)
         
-    print("Initial number of storms", len(list_of_times))
+    logger.info("Initial number of storms", len(list_of_times))
     temp = storm_time_df['storm']
     # first row is a True preceded by a False
     fst = temp.index[temp & ~ temp.shift(1).fillna(False)]
@@ -336,7 +341,7 @@ def main():
             
         storm_times.append((fst[i], lst[i]))
         
-    print("Number of storms after combining overlapping times:", len(storm_times))
+    logger.info("Number of storms after combining overlapping times:", len(storm_times))
 
     nDst = 0
     nKp = 0
@@ -351,11 +356,11 @@ def main():
         elif minDst <= -140:
             nDst += 1
         else:
-            print("Error, shouldn't get here!", maxKp, minDst)
+            logger.error("Error, shouldn't get here!", maxKp, minDst)
             
-    print("Number of events with both selections satisfied:", nBoth)
-    print("Number of events with only Kp satisfied:", nKp)
-    print("Number of events with only Dst satisfied:", nDst)
+    logger.info("Number of events with both selections satisfied:", nBoth)
+    logger.info("Number of events with only Kp satisfied:", nKp)
+    logger.info("Number of events with only Dst satisfied:", nDst)
 
     storm_df = pd.DataFrame(storm_times, columns=["Start", "End"])
     storm_df.to_csv((kp_dst_path / "storm_periods.csv"), index=False)
@@ -364,4 +369,3 @@ def main():
 if __name__ == "__main__":
     
     main()
-

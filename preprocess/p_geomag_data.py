@@ -9,7 +9,6 @@ Date:
 - February 2025
 """
 import os
-import logging
 from pathlib import Path
 from multiprocessing import Pool
 import xarray as xr
@@ -20,7 +19,12 @@ import bezpy.mag
 from itertools import chain
 import collections
 
-DATA_LOC = Path("__file__").resolve().parent.parent / "spw-geophy-io" / "data"
+from configs import setup_logger, get_data_dir
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/p_geomag.log")
+
 
 def process_magnetic_files(file_path, is_processed=False):
     """
@@ -53,7 +57,7 @@ def process_directory(dir_path):
     Process all magnetic field files in a given directory.
     
     """
-    logging.info(f"Processing {dir_path}")
+    logger.info(f"Processing {dir_path}")
     def process_file(filename):
         if filename.endswith((".min", ".csv")):
             file_path = os.path.join(dir_path, filename)
@@ -62,14 +66,14 @@ def process_directory(dir_path):
                 result["site_id"] = os.path.basename(dir_path)
                 return ds, result
             except Exception as e:
-                logging.error(f"Error processing file {file_path}: {str(e)}")
+                logger.error(f"Error processing file {file_path}: {str(e)}")
         return None, None
     
     results = list(filter(lambda x: x[0] is not None, map(process_file, sorted(os.listdir(dir_path)))))
     datasets, file_results = zip(*results) if results else ([], [])
     if datasets:
         return os.path.basename(dir_path), xr.concat(datasets, dim="Timestamp"), list(file_results)
-    logging.warning(f"No valid datasets found in {dir_path}")
+    logger.warning(f"No valid datasets found in {dir_path}")
 
     return os.path.basename(dir_path), None, None
 
@@ -135,7 +139,7 @@ def run_function(geomag_folder, usgs_obs, nrcan_obs):
     path = geomag_folder / "combined_geomag_df.csv"
     if not os.path.exists(path):
         results, obsv_xarrays = process_all_directories(geomag_folder, usgs_obs, nrcan_obs)
-        logging.info(f"Processed {len(obsv_xarrays)} valid observatories")
+        logger.info(f"Processed {len(obsv_xarrays)} valid observatories")
         combined_df = pd.concat(combine_results(results, obsv_xarrays))
         combined_df.to_csv(path)
     else:
