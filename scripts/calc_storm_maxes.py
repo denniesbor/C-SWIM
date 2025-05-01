@@ -14,7 +14,6 @@ import os
 import time
 import sys
 import psutil
-import logging
 import pickle
 import datetime
 from pathlib import Path
@@ -35,36 +34,12 @@ import matplotlib.pyplot as plt
 from pysecs import SECS
 from shapely.geometry import LineString
 
-DATA_LOC = Path(__file__).resolve().parent / ".."/ "data"
 
-# Set up logging, a reusable function
-def setup_logging():
-    """
-    Set up logging to both file and console.
-    """
-    # Create a logger
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+from configs import setup_logger, get_data_dir
 
-    # Create file handler which logs even debug messages
-    file_handler = logging.FileHandler("Getting storm maxes.log")
-    file_handler.setLevel(logging.INFO)
-
-    # Create console handler with a higher log level
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-
-    # Create formatter and add it to the handlers
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-
-    # Add the handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-
-setup_logging()
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/storm_maxes.log")
 
 
 # Routines and modules that are used to extract max Es, Bs, and Vs during a storm
@@ -95,13 +70,13 @@ def process_xml_file(full_path):
         site = bezpy.mt.read_xml(full_path)
 
         if site.rating < 3:
-            logging.info(f"Skipped: {full_path} (Outside region or low rating)")
+            logger.info(f"Skipped: {full_path} (Outside region or low rating)")
             return None
 
-        logging.info(f"Processed: {full_path}")
+        logger.info(f"Processed: {full_path}")
         return site
     except Exception as e:
-        logging.error(f"Error processing {full_path}: {e}")
+        logger.error(f"Error processing {full_path}: {e}")
         return None
 
 
@@ -142,9 +117,9 @@ def process_sites(directory):
                 MT_sites.append(result)
 
                 if completed % 100 == 0:
-                    logging.info(f"Completed {completed} files")
+                    logger.info(f"Completed {completed} files")
 
-    logging.info(f"Completed processing {completed} files")
+    logger.info(f"Completed processing {completed} files")
 
     return MT_sites
 
@@ -161,6 +136,7 @@ def load_mt_sites(mt_sites_pickle, emtf_path):
         with open(mt_sites_pickle, "wb") as pkl:
             pickle.dump(MT_sites, pkl)
         return MT_sites
+
 
 # --------------------------------------------------------------------------
 # Load and Prepare transmission lines data
@@ -243,6 +219,11 @@ def read_transmission_lines(translines_shp, trans_lines_pickle, site_xys):
         return trans_lines_gdf_not_na
 
 
+# %%
+# --------------------------------------------------------------------------
+# Prepare the paths and load the datasets
+# --------------------------------------------------------------------------
+
 def load_data(start_date=None, end_date=None):
     """
     Load geomagnetic data, MT sites, and transmission line data.
@@ -266,7 +247,7 @@ def load_data(start_date=None, end_date=None):
     # Set up paths
     emtf_path = DATA_LOC / "EMTF"
     mt_sites_pickle = emtf_path / "mt_pickle.pkl"
-    mag_data_path = DATA_LOC / "geomag_data" / "processed_geomag_data.nc"
+    mag_data_path = DATA_LOC / "processed_geomag_data.nc"
     translines_path = DATA_LOC / "Electric__Power_Transmission_Lines"
     trans_lines_pickle = translines_path / "trans_lines_pickle.pkl"
     translines_shp = translines_path / "Electric__Power_Transmission_Lines.shp"
@@ -280,27 +261,30 @@ def load_data(start_date=None, end_date=None):
     # Filter storm data if dates provided
     if start_date and end_date:
         storm_df = storm_df[
-            (storm_df["Start"] >= start_date) & 
-            (storm_df["End"] <= end_date)
+            (storm_df["Start"] >= start_date) & (storm_df["End"] <= end_date)
         ]
 
     # Load datasets
-    magnetic_data = xr.open_dataset(mag_data_path) # Load geomagnetic data
+    magnetic_data = xr.open_dataset(mag_data_path)  # Load geomagnetic data
     MT_sites = load_mt_sites(mt_sites_pickle, emtf_path)
-    
+
     # Get site coordinates
     site_xys = [(site.latitude, site.longitude) for site in MT_sites]
 
     # Load transmission lines
     df = read_transmission_lines(translines_shp, trans_lines_pickle, site_xys)
-    
+
     # Prepare SECS observation dictionary
     obs_dict = {
-        site.lower(): magnetic_data.sel(site=site) 
-        for site in magnetic_data.site.values
+        site.lower(): magnetic_data.sel(site=site) for site in magnetic_data.site.values
     }
 
     return magnetic_data, MT_sites, df, storm_df, obs_dict, site_xys
+
+
+# Data
+magnetic_data, MT_sites, df, storm_df, obs_dict, site_xys = load_data()
+n_trans_lines = df.shape[0]
 
 # %%
 # --------------------------------------------------------------------------
@@ -310,6 +294,8 @@ def load_data(start_date=None, end_date=None):
 # --------------------------------------------------------------------------
 
 R_earth = 6371e3
+
+
 def calculate_SECS(B, obs_xy, pred_xy):
     """Calculate SECS output magnetic field
 
@@ -356,18 +342,19 @@ def calculate_SECS(B, obs_xy, pred_xy):
 
     return B_pred
 
+
 # Find peaks
-def find_storm_maximum(E_pred, window_hours=(20/60)):
+def find_storm_maximum(E_pred, window_hours=(20 / 60)):
     """
     Find storm maximum using windowed analysis of 1-minute resolution data.
-    
+
     Parameters:
     -----------
     E_pred : numpy.ndarray
         Array of shape (time, sites, components) containing E-field values at 1-min resolution
     window_hours : float
         Size of the analysis window in hours
-    
+
     Returns:
     --------
     dict containing:
@@ -378,25 +365,25 @@ def find_storm_maximum(E_pred, window_hours=(20/60)):
     """
     # Convert window hours to number of samples (1 sample per minute)
     window_samples = int(window_hours * 60)
-    
+
     # Calculate magnitude at each site and time
     site_maxE_mags = np.sqrt(np.sum(E_pred**2, axis=2))
-    
+
     # Calculate the total magnitude across all sites
     total_magnitude = np.nansum(site_maxE_mags, axis=1)
-    
+
     # Create a centered moving average
     window = np.ones(window_samples) / window_samples
     # smoothed_magnitude = np.convolve(total_magnitude, window, mode='same')
-    smoothed_magnitude = gaussian_filter1d(total_magnitude, sigma=window_samples//2)
-    
+    smoothed_magnitude = gaussian_filter1d(total_magnitude, sigma=window_samples // 2)
+
     # Find peaks in the smoothed data
     peaks, _ = signal.find_peaks(
         smoothed_magnitude,
-        distance=window_samples//2,  # Minimum distance between peaks
-        prominence=0.2 * np.max(smoothed_magnitude)  # Minimum prominence
+        distance=window_samples // 2,  # Minimum distance between peaks
+        prominence=0.2 * np.max(smoothed_magnitude),  # Minimum prominence
     )
-    
+
     if len(peaks) == 0:
         # If no peaks found, use the maximum point
         optimal_time = np.argmax(smoothed_magnitude)
@@ -404,26 +391,26 @@ def find_storm_maximum(E_pred, window_hours=(20/60)):
         # Among the peaks, find the one with highest average in surrounding window
         peak_scores = []
         for peak in peaks:
-            start_idx = max(0, peak - window_samples//2)
-            end_idx = min(len(smoothed_magnitude), peak + window_samples//2)
+            start_idx = max(0, peak - window_samples // 2)
+            end_idx = min(len(smoothed_magnitude), peak + window_samples // 2)
             window_mean = np.mean(smoothed_magnitude[start_idx:end_idx])
             peak_scores.append(window_mean)
-        
+
         optimal_time = peaks[np.argmax(peak_scores)]
-    
+
     # Get data at the optimal time
     return {
-        'optimal_time': optimal_time,
-        'site_magnitudes': E_pred[optimal_time],
-        'total_magnitude': total_magnitude[optimal_time],
-        'smoothed_magnitude': smoothed_magnitude[optimal_time]
+        "optimal_time": optimal_time,
+        "site_magnitudes": E_pred[optimal_time],
+        "total_magnitude": total_magnitude[optimal_time],
+        "smoothed_magnitude": smoothed_magnitude[optimal_time],
     }
 
 
 # --------------------------------------------------------------------------
 # Calculate the maxes for all storms
 # --------------------------------------------------------------------------
-def calculate_maxes(start_time, end_time, calcV=False):
+def calculate_maxes(start_time, end_time, calcV=False, if_gannon=True):
     """
     Calculate maximum magnetic fields, electric fields, and voltages for given time range and observation data.
 
@@ -477,7 +464,7 @@ def calculate_maxes(start_time, end_time, calcV=False):
     B_obs = np.squeeze(np.array(B_obs)).transpose(2, 0, 1)
 
     B_pred = calculate_SECS(B_obs, obs_xy, site_xys)
-    logging.info(f"Done calculating magnetic fields: {time.time() - t0}")
+    logger.info(f"Done calculating magnetic fields: {time.time() - t0}")
 
     site_maxB = np.max(np.sqrt(B_pred[:, :, 0] ** 2 + B_pred[:, :, 1] ** 2), axis=0)
 
@@ -486,39 +473,46 @@ def calculate_maxes(start_time, end_time, calcV=False):
         Ex, Ey = site.convolve_fft(B_pred[:, i, 0], B_pred[:, i, 1], dt=60)
         E_pred[:, i, 0] = Ex
         E_pred[:, i, 1] = Ey
-        
+
     # Storm peaks
-    e_pred_peak_data = find_storm_maximum(E_pred, window_hours=(20/60)) # Every 20 minutes for thermal heating
-    peak_time = e_pred_peak_data['optimal_time']
+    e_pred_peak_data = find_storm_maximum(
+        E_pred, window_hours=(20 / 60)
+    )  # Every 20 minutes for thermal heating
+    peak_time = e_pred_peak_data["optimal_time"]
     e_pred_peak = E_pred[peak_time, :, :]
-    
+
     e_pred_magnitude = np.sqrt(np.sum(e_pred_peak**2, axis=1))
 
-    logging.info(f"Done calculating electric fields: {time.time() - t0}")
+    logger.info(f"Done calculating electric fields: {time.time() - t0}")
     # site_maxE = np.max(np.sqrt(E_pred[:, :, 0] ** 2 + E_pred[:, :, 1] ** 2), axis=0)
     site_maxE = e_pred_magnitude
 
     if calcV:
-        # logging.info("Calculating voltages...")
-        # arr_delaunay = np.zeros(shape=(E_pred.shape[0], n_trans_lines))
-        # for i, tLine in enumerate(df.obj):
-        #     arr_delaunay[:, i] = tLine.calc_voltages(E_pred, how="delaunay")
-        # line_maxV = np.nanmax(np.abs(arr_delaunay), axis=0)
-        # logging.info(f"Done calculating voltages: {time.time() - t0}")
-        e_pred = e_pred_peak.reshape(1, e_pred_peak.shape[0], e_pred_peak.shape[1])
-        logging.info("Calculating voltages...")
-        arr_delaunay = np.zeros(shape=(e_pred.shape[0], n_trans_lines))
-        for i, tLine in enumerate(df.obj):
-            arr_delaunay[:, i] = tLine.calc_voltages(e_pred, how="delaunay")
-        line_maxV = np.squeeze(arr_delaunay)
-        logging.info(f"Done calculating voltages: {time.time() - t0}")
-    
+        if if_gannon:
+            logger.info("Calculating voltages, Gannon only...")
+            arr_delaunay = np.zeros(shape=(E_pred.shape[0], n_trans_lines))
+            for i, tLine in enumerate(df.obj):
+                arr_delaunay[:, i] = tLine.calc_voltages(E_pred, how="delaunay")
+            line_maxV = np.nanmax(np.abs(arr_delaunay), axis=0)
+            logger.info(f"Done calculating voltages, Gannon: {time.time() - t0}")
+
+            return (site_maxB, site_maxE, arr_delaunay, B_pred, E_pred)
+
+        else:
+            e_pred = e_pred_peak.reshape(1, e_pred_peak.shape[0], e_pred_peak.shape[1])
+            logger.info("Calculating voltages...")
+            arr_delaunay = np.zeros(shape=(e_pred.shape[0], n_trans_lines))
+            for i, tLine in enumerate(df.obj):
+                arr_delaunay[:, i] = tLine.calc_voltages(e_pred, how="delaunay")
+            line_maxV = np.squeeze(arr_delaunay)
+            logger.info(f"Done calculating voltages: {time.time() - t0}")
+
     else:
-        logging.info("Skipping voltage calculation")
+        logger.info("Skipping voltage calculation")
         line_maxV = np.zeros(n_trans_lines)
-        
+
     # Apply Gaussinan smoothing to the electric field
-    
+    print("B_pred shape", B_pred.shape)
 
     return (site_maxB, site_maxE, line_maxV, B_pred, E_pred)
 
@@ -540,16 +534,16 @@ def process_storm(args):
     tuple
         Contains (i, maxB, maxE, maxV)
     """
-    i, row, calcV = args
+    i, row, calcV, gannon_storm = args
     try:
         storm_times = (row["Start"], row["End"])
-        logging.info(f"Working on storm: {i + 1}")
+        logger.info(f"Working on storm: {i + 1}")
         maxB, maxE, maxV, B_pred, E_pred = calculate_maxes(
-            storm_times[0], storm_times[1], calcV
+            storm_times[0], storm_times[1], calcV, if_gannon=gannon_storm
         )
         return i, maxB, maxE, maxV, B_pred, E_pred
     except Exception as e:
-        logging.error(f"Error processing storm {i + 1}: {e}")
+        logger.error(f"Error processing storm {i + 1}: {e}")
         return i, None, None, None, None, None
 
 
@@ -560,25 +554,30 @@ def main():
     maxB_file = DATA_LOC / "maxB_arr_testing_2.npy"
     maxE_file = DATA_LOC / "maxE_arr_testing_2.npy"
     maxV_file = DATA_LOC / "maxV_arr_testing_2.npy"
+    gannon_delaunay = DATA_LOC / "delaunay_v_gannon.npy"
+
+    site_xys = np.array([(site.latitude, site.longitude) for site in MT_sites])
+    mt_site_names = [site.name for site in MT_sites]
 
     # Log done loading data, and print unique obs in obs_dict
-    logging.info(f"Done loading data, Obs in obs_dict: {obs_dict.keys()}")
+    logger.info(f"Done loading data, Obs in obs_dict: {obs_dict.keys()}")
 
     CALCULATE_VALUES = True
     if CALCULATE_VALUES:
         t0 = time.time()
-        logging.info(f"Starting to calculate storm maxes...")
+        logger.info(f"Starting to calculate storm maxes...")
 
     if CALCULATE_VALUES:
         n_storms = len(storm_df)
         n_sites = len(site_xys)
-        calcV  = True
+        calcV = True
+        gannon_storm = True
 
         # Check if saved results exist, else initialize arrays
         if os.path.exists(maxB_file) and os.path.exists(maxE_file):
             maxB_arr = np.load(maxB_file)
             maxE_arr = np.load(maxE_file)
-            logging.info(f"Loaded existing maxB and maxE arrays")
+            logger.info(f"Loaded existing maxB and maxE arrays")
         else:
             maxB_arr = np.zeros((n_sites, n_storms))
             maxE_arr = np.zeros((n_sites, n_storms))
@@ -588,14 +587,13 @@ def main():
         else:
             maxV_arr = np.zeros((n_trans_lines, n_storms))
 
-        # Prepare the args list for only unprocessed storms
+        # Prepare the args list for only unprocessed storms OR if i == 91 (force processing)
         args = []
         for i, row in storm_df.iterrows():
-            # Check if the storm has already been processed by checking the result arrays
-            if np.all(maxB_arr[:, i] == 0):  # Not processed if all zeros
-                args.append((i, row, calcV))
+            if np.all(maxB_arr[:, i] == 0) or i == 91:  # Always process i == 91
+                args.append((i, row, calcV, gannon_storm))
 
-        logging.info(f"Processing {len(args)} remaining storms")
+        logger.info(f"Processing {len(args)} remaining storms")
 
         # Use multiprocessing with a pool of workers
         with multiprocessing.Pool(12) as pool:
@@ -606,23 +604,60 @@ def main():
                 maxB_arr[:, i] = maxB
                 maxE_arr[:, i] = maxE
                 if calcV:
-                    maxV_arr[:, i] = maxV
+                    if gannon_storm:
+                        np.save(gannon_delaunay, maxV)
+                    else:
+                        maxV_arr[:, i] = maxV
+                        np.save(maxV_file, maxV_arr)
 
                 # Save intermediate results after each storm
                 np.save(maxB_file, maxB_arr)
                 np.save(maxE_file, maxE_arr)
-                if calcV:
-                    np.save(maxV_file, maxV_arr)
 
-                logging.info(f"Processed and saved storm: {i + 1}")
+                logger.info(f"Processed and saved storm: {i + 1}")
 
-        logging.info(f"Done calculating storm maxes: {time.time() - t0}")
-        logging.info(f"Saved results to {DATA_LOC}")
+        logger.info(f"Done calculating storm maxes: {time.time() - t0}")
+        logger.info(f"Saved results to {DATA_LOC}")
+
+        # If Gannon storm, save additional data
+        if gannon_storm and i == 91:
+            logger.info("Processing Gannon storm data...")
+            gannon_start = storm_df.loc[91, "Start"]
+            gannon_end = storm_df.loc[91, "End"]
+
+            # Generate time stamps with 60s intervals
+            time_stamps = pd.date_range(start=gannon_start, end=gannon_end, freq="60S")
+            print("B_pred shape and time stamps leng", B_pred.shape, len(time_stamps))
+
+            # Ensure B_pred aligns with time dimension
+            if B_pred.shape[0] != len(time_stamps):
+                logger.warning(
+                    f"Mismatch in time length: B_pred {B_pred.shape[0]} vs time {len(time_stamps)}"
+                )
+                time_stamps = time_stamps[: B_pred.shape[0]]  # Trim if necessary
+
+            B_pred = B_pred[:, :, :2]  # Only use Bx and By
+
+            ds_gannon = xr.Dataset(
+                {
+                    "B_pred": (["time", "site", "component"], B_pred),
+                    "E_pred": (["time", "site", "component"], E_pred),
+                },
+                coords={
+                    "time": time_stamps,
+                    "name": mt_site_names,
+                    "site_x": site_xys[:, 0],
+                    "site_y": site_xys[:, 1],
+                    "component": ["Bx", "By"],
+                },
+            )
+            ds_gannon.to_netcdf(DATA_LOC / "ds_gannon.nc")
+            logger.info(f"Gannon storm dataset saved to ds_gannon.nc")
+
 
 if __name__ == "__main__":
-       
+
     magnetic_data, MT_sites, df, storm_df, obs_dict, site_xys = load_data()
     n_trans_lines = df.shape[0]
 
     main()
-

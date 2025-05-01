@@ -1,17 +1,20 @@
-# ...............................................................
-# Description: This script is used to build the US EHV admittance matrix
-# Dependecy scripts: Requires data from data_preprocessing.ipynb notebook
-# Output: Admittance matrix
-# Author: Dennies Bor
-# ...............................................................
+"""
+Script to build a US EHV admittance matrix. 
 
-# %%
+Make sure you have first run the preprocessing scripts. 
+
+Authors:
+- Dennies Bor
+- Ed Oughton
+
+Date:
+- February 2025
+"""
 import pickle
 import sys
 import os
 import random
 import warnings
-import logging
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -19,45 +22,175 @@ from scipy.sparse import eye
 from scipy.sparse.linalg import spsolve
 
 
-# Set up logging, a reusable function
-def setup_logging():
-    """
-    Set up logging to both file and console.
-    """
-    # Create a logger
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+from configs import setup_logger, get_data_dir
 
-    # Create file handler which logs even debug messages
-    file_handler = logging.FileHandler("admittance_matrix.log")
-    file_handler.setLevel(logging.INFO)
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/build_adm_matrix.log")
 
-    # Create console handler with a higher log level
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+def process_substation_buses(DATA_LOC, evan_data=False):
 
-    # Create formatter and add it to the handlers
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
+    (
+        unique_sub_voltage_pairs,
+        df_lines_EHV,
+        trans_lines_gdf,
+        substation_to_line_voltages,
+        ss_df,
+        trans_lines_within_FERC_filtered,
+        ss_type_dict,
+        transformer_counts_dict,
+        ss_role_dict,
+    ) = load_and_process_data(DATA_LOC)
 
-    # Add the handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    # File paths
+    substation_buses_pkl = DATA_LOC / "admittance_matrix" / "substation_buses.pkl"
+    bus_ids_map_pkl = DATA_LOC / "admittance_matrix" / "bus_ids_map.pkl"
+    sub_look_up_pkl = DATA_LOC / "admittance_matrix" / "sub_look_up.pkl"
+    transmission_lines_csv = DATA_LOC / "admittance_matrix" / "transmission_lines.csv"
+    substation_info_csv = DATA_LOC / "admittance_matrix" / "substation_info.csv"
 
-    return logger
+    # Check if pickled data exists to avoid reprocessing
+    if (
+        os.path.exists(substation_buses_pkl)
+        and os.path.exists(bus_ids_map_pkl)
+        and os.path.exists(sub_look_up_pkl)
+    ):
+        # Load data from pickle
+        with open(substation_buses_pkl, "rb") as f:
+            substation_buses = pickle.load(f)
+
+        with open(bus_ids_map_pkl, "rb") as f:
+            bus_ids_map = pickle.load(f)
+
+        with open(sub_look_up_pkl, "rb") as f:
+            sub_look_up = pickle.load(f)
+
+        # Load CSV files
+        df_lines = pd.read_csv(transmission_lines_csv)
+        substations_df = pd.read_csv(substation_info_csv)
+
+        # Try to eval buses
+        substations_df["buses"] = substations_df["buses"].apply(eval)
+
+    else:
+        if evan_data:
+            substation_buses = []
+        else:
+            # Process substation_buses and bus ids
+            substation_buses = build_substation_buses(
+                unique_sub_voltage_pairs,
+                df_lines_EHV,
+                ss_type_dict,
+                substation_to_line_voltages,
+            )
+
+        # Create bus ids from buses within the substations
+        buses = []
+        for sub_info in substation_buses.values():
+            buses.extend(sub_info["buses"])
+        buses = np.unique(buses)
+
+        # Create a dictionary to map buses to integers
+        bus_ids_map = {bus: i + 1 for i, bus in enumerate(buses)}
+
+        # Typically substation grounding resistances range from 0.1 -> 0.2 (Horton, et al., 2013)
+        grounding_resistances = [0.1, 0.2]
+
+        # Use from dict to load substation_buses
+        df_substations_info = pd.DataFrame(substation_buses).T.reset_index()
+        df_substations_info = df_substations_info[
+            ["SS_ID", "Transformer_type", "buses"]
+        ]
+
+        # Apply bus_id map to buses
+        df_substations_info["buses"] = df_substations_info["buses"].apply(
+            lambda x: [bus_ids_map[bus] for bus in x]
+        )
+
+        # Merge with substations info to get latitude and longitude
+        df_substations_info = df_substations_info.merge(
+            ss_df[["SS_ID", "lat", "lon"]], on="SS_ID", how="left"
+        )
+        df_substations_info["grounding_resistance"] = grounding_resistances[1]
+
+        # Rename SSID, lat, and lon columns
+        df_substations_info.rename(
+            columns={"SS_ID": "name", "lat": "latitude", "lon": "longitude"},
+            inplace=True,
+        )
+
+        # Flatten the dictionary
+        flattened_data = flatten_substation_dict(substation_buses, df_lines_EHV, buses)
+
+        # Create DataFrame
+        df_lines_final = pd.DataFrame(
+            flattened_data, columns=["from_bus_id", "to_bus_id", "utility", "name"]
+        )
+
+        # Filter df_lines_EHV
+        df_lines_EHV[~(df_lines_EHV.VOLTAGE.isin([345, 230, 765, 500]))].shape
+
+        # Approximate line resistances
+        line_resistance = {
+            765: 0.01,  # Ω/km (converted from 0.0227 Ω/mi)
+            500: 0.0141,  # Ω/km (converted from 0.0227 Ω/mi)
+            345: 0.0283,  # Ω/km (converted from 0.0455 Ω/mi)
+            232: 0.0450,  # Ω/km (estimated)
+            230: 0.0500,  # Ω/km (estimated)
+            220: 0.0700,  # Ω/km (estimated)
+            138: 0.0800,  # Ω/km (estimated)
+            69: 0.1200,  # Ω/km (estimated)
+        }
+
+        # Estimate line resistances
+        substations_df = df_substations_info.copy()
+
+        df_lines = calculate_line_resistances(
+            df_lines_final,
+            df_lines_EHV,
+            line_resistance,
+            trans_lines_within_FERC_filtered,
+            bus_ids_map,
+        )
+
+        # Build neutral points and transformer lookup
+        sub_look_up = {}
+        index = 0
+        for i, row in substations_df.iterrows():
+            buses = row["buses"]
+            for bus in sorted(buses):
+                sub_look_up[bus] = index
+                index += 1
+
+        for i, row in substations_df.iterrows():
+            if row["name"] != "Substation 7":
+                sub_look_up[row["name"]] = index
+                index += 1
+
+        # Pickle the substation_buses, bus_ids_map, and sub_look_up
+        with open(substation_buses_pkl, "wb") as f:
+            pickle.dump(substation_buses, f)
+
+        with open(bus_ids_map_pkl, "wb") as f:
+            pickle.dump(bus_ids_map, f)
+
+        with open(sub_look_up_pkl, "wb") as f:
+            pickle.dump(sub_look_up, f)
+
+        # Save transmission lines and substations info to CSV
+        df_lines.to_csv(transmission_lines_csv, index=False)
+        df_substations_info.to_csv(substation_info_csv, index=False)
+
+    return substation_buses, bus_ids_map, sub_look_up, df_lines, substations_df
 
 
-logger = setup_logging()
-
-
-def load_and_process_data(data_loc):
+def load_and_process_data(DATA_LOC):
     """
     Load and process various data files for power system analysis.
 
     Parameters
     ----------
-    data_loc : Path
+    DATA_LOC : Path
         Path to the data directory.
 
     Returns
@@ -77,25 +210,24 @@ def load_and_process_data(data_loc):
     logger.info("Loading and processing data...")
 
     # Load pickled data
-    with open(data_loc / "admittance_matrix" / "unique_sub_voltage_pairs.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "unique_sub_voltage_pairs.pkl", "rb") as f:
         unique_sub_voltage_pairs = pickle.load(f)
 
-    with open(data_loc / "admittance_matrix" / "df_lines_EHV.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "df_lines_EHV.pkl", "rb") as f:
         df_lines_EHV = pickle.load(f)
 
-    transmission_line_path = (
-        data_loc / "Electric__Power_Transmission_Lines" / "trans_lines_pickle.pkl"
-    )
-    with open(transmission_line_path, "rb") as f:
+    filename = "trans_lines_pickle.pkl"
+    folder = DATA_LOC / "Electric__Power_Transmission_Lines"
+    with open(folder / filename, "rb") as f:
         trans_lines_gdf = pickle.load(f)
 
-    with open(data_loc / "admittance_matrix" / "substation_to_line_voltages.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "substation_to_line_voltages.pkl", "rb") as f:
         substation_to_line_voltages = pickle.load(f)
 
-    with open(data_loc / "admittance_matrix" / "ss_df.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "ss_df.pkl", "rb") as f:
         ss_df = pickle.load(f)
 
-    with open(data_loc / "admittance_matrix" / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
+    with open(DATA_LOC / "grid_processed" / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
         trans_lines_within_FERC_filtered = pickle.load(f)
 
     # Process data
@@ -103,10 +235,9 @@ def load_and_process_data(data_loc):
     ss_type_dict = dict(zip(ss_df["SS_ID"], ss_df["SS_TYPE"]))
 
     # Process grid mapping data
-    grid_mapping = pd.read_csv(data_loc / "grid_mapping.csv")
+    grid_mapping = pd.read_csv(DATA_LOC / "grid_mapping.csv")
     grid_mapping["Attributes"] = grid_mapping["Attributes"].apply(eval)
     transformers_df = grid_mapping[grid_mapping["Marker Label"] == "Transformer"]
-    transformers_df = transformers_df.copy()
     transformers_df["Role"] = transformers_df["Attributes"].apply(lambda x: x["role"])
     transformers_df["type"] = transformers_df["Attributes"].apply(lambda x: x["type"])
     transformer_counts = (
@@ -120,7 +251,7 @@ def load_and_process_data(data_loc):
     ss_role_dict = dict(zip(ss_role["SS_ID"], ss_role["Role"]))
 
     # Save transformer counts
-    with open(data_loc / "admittance_matrix" / "transformer_counts.pkl", "wb") as f:
+    with open(DATA_LOC / "admittance_matrix" /"transformer_counts.pkl", "wb") as f:
         pickle.dump(transformer_counts_dict, f)
 
     logger.info("Data loaded and processed.")
@@ -137,16 +268,13 @@ def load_and_process_data(data_loc):
         ss_role_dict,
     )
 
-# Load and process data
-data_loc = Path("__file__").resolve().parent / '..'/ "data" / "admittance_matrix"
 
-# %%
 def build_substation_buses(
     unique_sub_voltage_pairs,
     df_lines_EHV,
     ss_type_dict,
     substation_to_line_voltages,
-):
+    ):
     """
     Build substation buses based on unique substation-voltage pairs and a dataframe of EHV lines.
     Parameters:
@@ -166,7 +294,7 @@ def build_substation_buses(
     - The function identifies external buses connected to the low voltage bus
     """
 
-    logging.info("Building substation buses...")
+    logger.info("Building substation buses...")
     # Approximate substation buses
     substation_buses = {}
 
@@ -183,9 +311,9 @@ def build_substation_buses(
         if substation not in substation_buses:
 
             # We will focus now on distribution and transmission substations
-            if ss_type not in ["Distribution", "Transmission"]:
+            if ss_type not in ["distribution", "transmission"]:
                 continue
-
+            # print('here')
             # Voltages in substation
             sub_connected_lines = np.array(
                 [float(v) for v in substation_to_line_voltages[substation]]
@@ -322,49 +450,11 @@ def build_substation_buses(
 
             substation_buses[substation] = substation_info
 
-    logging.info("Substation buses built.")
+    logger.info("Substation buses built.")
 
     return substation_buses
 
 
-# Get transformer data using grid mapping exercise
-def get_transformer_data_evan(substation_buses, transformer_counts_dict):
-
-    # Get transformer data using Evan's verified data
-    logger.info("Getting transformer data using Evan's verified data...")
-
-    transformer_types = ["GY-D", "GY-GY", "GY-GY-D", "Auto"]
-
-    # Tranformer generator number
-    transformer_gen_num = 0
-    transformers_data = []
-    count = 0
-    for substation, values in substation_buses.items():
-
-        tf_count = transformer_counts_dict.get(substation, 1)
-
-        # Increment transformer generator number
-        tf_nos = []
-        for _ in range(min(tf_count, 3)):
-            transformer_gen_num += 1
-            transformer_number = "T" + str(transformer_gen_num)
-
-            transformer_data = {
-                "sub_id": substation,
-                "name": transformer_number,
-                "type": values["Transformer_type"],
-                "bus1_id": values["hv_bus"],
-                "bus2_id": values["lv_bus"],
-            }
-
-            transformers_data.append(transformer_data)
-            tf_nos.append(transformer_number)
-
-    logger.info("Transformer data generated.")
-    return transformers_data
-
-
-# %%
 def flatten_substation_dict(data, df_lines_EHV, buses):
     """
     Flatten the substation dictionary and generate records for building an admittance matrix.
@@ -372,12 +462,12 @@ def flatten_substation_dict(data, df_lines_EHV, buses):
         data (dict): A dictionary containing substation details.
     Returns:
         list: A list of records for building an admittance matrix.
+        
     """
-
     # Format lines into a format to build an admittance matrix
     records = []
 
-    logging.info("Flattening substation dictionary...")
+    logger.info("Flattening substation dictionary...")
 
     for substation, details in data.items():
         hv_bus = details["hv_bus"]
@@ -418,9 +508,8 @@ def flatten_substation_dict(data, df_lines_EHV, buses):
     return records
 
 
-def calculate_line_resistances(
-    df, df_ehv, line_resistance, trans_lines_within_FERC_filtered_, bus_ids_map
-):
+def calculate_line_resistances(df, df_ehv, line_resistance, 
+    trans_lines_within_FERC_filtered_, bus_ids_map):
     """
     Calculate line resistances for each line in the dataframe.
     Parameters:
@@ -482,7 +571,192 @@ def calculate_line_resistances(
     return df
 
 
-# %%
+def get_transformer_samples(
+    substation_buses,
+    sample_net_name="sample_network.pkl",
+    n_samples=2000,
+    seed=42,
+    ):
+    """
+    Generate multiple samples of network configurations:
+    - Each substation gets assigned a transformer count
+    - Each transformer count gets assigned types
+    - Returns a list of DataFrames, each with one sample configuration per substation.
+    """
+
+    # Define file path
+    data_path = DATA_LOC / sample_net_name
+
+    # Check if pre-generated samples exist
+    if os.path.exists(data_path):  # Changed from 'not os.path.exists'
+        with open(data_path, "rb") as f:
+            all_samples = pickle.load(f)
+            logger.info(
+                f"Loaded {len(all_samples)} pre-generated samples from {data_path}"
+            )
+    else:
+        logger.info(f"Generating {n_samples} new samples...")
+        # Set seed for reproducibility
+        np.random.seed(seed)
+
+        # Transformer types and sample storage
+        transformer_types = ["GY-GY", "GY-GY-D", "Auto"]
+        all_samples = []
+
+        for i in range(n_samples):
+            # Create configuration data for each substation in this sample
+            # Transformer generator number
+            transformer_gen_num = 0
+            transformers_data = []
+
+            # Randomly assign transformer count and types for each substation
+            for sub_id, values in substation_buses.items():
+                # Assign a random transformer count (1 to 3)
+                trafo_count = np.random.randint(
+                    1, 4
+                )  # Changed from 4 to match your description
+
+                # Select random transformer types for the count
+                selected_types = list(
+                    np.random.choice(transformer_types, size=trafo_count, replace=True)
+                )
+
+                # Add transformers
+                for transformer_type in selected_types:
+                    transformer_gen_num += 1
+                    transformer_number = (
+                        "T" + "_" + str(sub_id) + "_" + str(transformer_gen_num)
+                    )
+
+                    transformer_data = {
+                        "sub_id": sub_id,
+                        "name": transformer_number,
+                        "type": transformer_type,
+                        "bus1_id": values["hv_bus"],
+                        "bus2_id": values["lv_bus"],
+                    }
+
+                    transformers_data.append(transformer_data)
+
+            # Append the sample as a DataFrame
+            all_samples.append(pd.DataFrame(transformers_data))
+
+        logger.info(f"Generated {len(all_samples)} samples. Saving to {data_path}")
+        # Save the generated samples to a file for reuse
+        with open(data_path, "wb") as f:
+            pickle.dump(all_samples, f)
+
+    return all_samples
+
+
+def random_admittance_matrix(substation_buses, df_transformers, bus_ids_map,
+    sub_look_up, df_lines, substations_df, evan_data=False,
+    transformer_counts_dict=None):
+    # ..................................................
+    # Create a dictionary to store the resistance values
+    # Only HV distribution and transmission substations are taken into consideration
+    # We consider a Delta-Wye architecture for substations with a single bus
+    # Although, a dummy LV bus is introduced where GIC flow is zero
+    # ..................................................
+    transformer_winding_resistances = {
+        "GY-GY-D": {"pri": 0.2, "sec": 0.1},
+        "GY-GY": {"pri": 0.04, "sec": 0.06},
+        "Auto": {"pri": 0.04, "sec": 0.06},
+        "GSU": {"pri": 0.15, "sec": float("inf")},
+        "Tee": {"pri": 0.01, "sec": 0.01},
+        "GY-D": {"pri": 0.05, "sec": 0.1},
+    }
+
+    if evan_data:
+        transformers_data = get_transformer_data_evan(
+            substation_buses, transformer_counts_dict
+        )
+        # Create a transformer df
+        df_transformers = pd.DataFrame(transformers_data)
+
+    # Transformer W1 and W2
+    df_transformers["W1"] = df_transformers["type"].apply(
+        lambda x: transformer_winding_resistances[x]["pri"]
+    )
+    df_transformers["W2"] = df_transformers["type"].apply(
+        lambda x: transformer_winding_resistances[x]["sec"]
+    )
+
+    # Apply bus_id map
+    df_transformers["bus1"] = df_transformers["bus1_id"].map(bus_ids_map)
+    df_transformers["bus2"] = df_transformers["bus2_id"].map(bus_ids_map)
+
+    # Merge transformers with lat and lon data
+    df_transformers = df_transformers.merge(
+        substations_df[["name", "latitude", "longitude"]],
+        left_on="sub_id",
+        right_on="name",
+        how="left",
+    )
+
+    # Rename name_x to name
+    df_transformers.rename(columns={"name_x": "name"}, inplace=True)
+
+    # Drop name_y
+    df_transformers.drop("name_y", axis=1, inplace=True)
+
+    # Useful cols
+    df_transformers = df_transformers[
+        ["sub_id", "name", "type", "bus1", "bus2", "W1", "W2", "latitude", "longitude"]
+    ]
+
+    sub_ref = dict(zip(substations_df.name, substations_df.buses))
+
+    # Neutral points in a trafor
+    df_transformers["sub"] = df_transformers.bus1.apply(
+        lambda x: find_substation_name(x, sub_ref)
+    )
+    df_transformers["neutral_point"] = df_transformers["sub"].apply(
+        lambda x: sub_look_up.get(x, None)
+    )
+
+    # Build network admittance
+    Y = network_admittance(sub_look_up, sub_ref, df_transformers, df_lines)
+    Y_e = earthing_impedance(sub_look_up, substations_df)
+
+    return Y, Y_e, df_transformers
+
+
+def get_transformer_data_evan(substation_buses, transformer_counts_dict):
+
+    # Get transformer data using Evan's verified data
+    logger.info("Getting transformer data using Evan's verified data...")
+
+    transformer_types = ["GY-D", "GY-GY", "GY-GY-D", "Auto"]
+
+    # Tranformer generator number
+    transformer_gen_num = 0
+    transformers_data = []
+    count = 0
+    for substation, values in substation_buses.items():
+
+        tf_count = transformer_counts_dict.get(substation, 1)
+
+        # Increment transformer generator number
+        tf_nos = []
+        for _ in range(min(tf_count, 3)):
+            transformer_gen_num += 1
+            transformer_number = "T" + str(transformer_gen_num)
+
+            transformer_data = {
+                "sub_id": substation,
+                "name": transformer_number,
+                "type": values["Transformer_type"],
+                "bus1_id": values["hv_bus"],
+                "bus2_id": values["lv_bus"],
+            }
+
+            transformers_data.append(transformer_data)
+            tf_nos.append(transformer_number)
+
+    logger.info("Transformer data generated.")
+    return transformers_data
+
 # --------------------------------Build Admittance Matrix--------------------------------
 # We shall us LPm formulation to build the admittance matrix
 # The matrix is made of the network admittance and earthing impedances
@@ -494,7 +768,6 @@ def find_substation_name(bus, sub_ref):
     return None
 
 
-# %%
 # Build Y^n
 def add_admittance(Y, from_bus, to_bus, admittance):
     """
@@ -677,260 +950,22 @@ def earthing_impedance(sub_look_up, substations_df):
     return Y_e
 
 
-def process_substation_buses(data_loc, evan_data=False):
-
-    (
-        unique_sub_voltage_pairs,
-        df_lines_EHV,
-        trans_lines_gdf,
-        substation_to_line_voltages,
-        ss_df,
-        trans_lines_within_FERC_filtered,
-        ss_type_dict,
-        transformer_counts_dict,
-        ss_role_dict,
-    ) = load_and_process_data(data_loc)
-
-    # File paths
-    substation_buses_pkl = data_loc / "admittance_matrix" / "substation_buses.pkl"
-    bus_ids_map_pkl = data_loc / "admittance_matrix" / "bus_ids_map.pkl"
-    sub_look_up_pkl = data_loc / "admittance_matrix" / "sub_look_up.pkl"
-    transmission_lines_csv = data_loc / "admittance_matrix" / "transmission_lines.csv"
-    substation_info_csv = data_loc / "admittance_matrix" / "substation_info.csv"
-
-    # Check if pickled data exists to avoid reprocessing
-    if (
-        os.path.exists(substation_buses_pkl)
-        and os.path.exists(bus_ids_map_pkl)
-        and os.path.exists(sub_look_up_pkl)
-    ):
-        # Load data from pickle
-        with open(substation_buses_pkl, "rb") as f:
-            substation_buses = pickle.load(f)
-
-        with open(bus_ids_map_pkl, "rb") as f:
-            bus_ids_map = pickle.load(f)
-
-        with open(sub_look_up_pkl, "rb") as f:
-            sub_look_up = pickle.load(f)
-
-        # Load CSV files
-        df_lines = pd.read_csv(transmission_lines_csv)
-        substations_df = pd.read_csv(substation_info_csv)
-
-        # Try to eval buses
-        substations_df["buses"] = substations_df["buses"].apply(eval)
-
-    else:
-
-        if evan_data:
-            substation_buses = []
-        else:
-            # Process substation_buses and bus ids
-            substation_buses = build_substation_buses(
-                unique_sub_voltage_pairs,
-                df_lines_EHV,
-                ss_type_dict,
-                substation_to_line_voltages,
-            )
-
-        # Create bus ids from buses within the substations
-        buses = []
-        for sub_info in substation_buses.values():
-            buses.extend(sub_info["buses"])
-        buses = np.unique(buses)
-
-        # Create a dictionary to map buses to integers
-        bus_ids_map = {bus: i + 1 for i, bus in enumerate(buses)}
-
-        # Typically substation grounding resistances range from 0.1 -> 0.2 (Horton, et al., 2013)
-        grounding_resistances = [0.1, 0.2]
-
-        # Use from dict to load substation_buses
-        df_substations_info = pd.DataFrame(substation_buses).T.reset_index()
-        df_substations_info = df_substations_info[
-            ["SS_ID", "Transformer_type", "buses"]
-        ]
-
-        # Apply bus_id map to buses
-        df_substations_info["buses"] = df_substations_info["buses"].apply(
-            lambda x: [bus_ids_map[bus] for bus in x]
-        )
-
-        # Merge with substations info to get latitude and longitude
-        df_substations_info = df_substations_info.merge(
-            ss_df[["SS_ID", "lat", "lon"]], on="SS_ID", how="left"
-        )
-        df_substations_info["grounding_resistance"] = grounding_resistances[1]
-
-        # Rename SSID, lat, and lon columns
-        df_substations_info.rename(
-            columns={"SS_ID": "name", "lat": "latitude", "lon": "longitude"},
-            inplace=True,
-        )
-
-        # Flatten the dictionary
-        flattened_data = flatten_substation_dict(substation_buses, df_lines_EHV, buses)
-
-        # Create DataFrame
-        df_lines_final = pd.DataFrame(
-            flattened_data, columns=["from_bus_id", "to_bus_id", "utility", "name"]
-        )
-
-        # Filter df_lines_EHV
-        df_lines_EHV[~(df_lines_EHV.VOLTAGE.isin([345, 230, 765, 500]))].shape
-
-        # Approximate line resistances
-        line_resistance = {
-            765: 0.01,  # Ω/km (converted from 0.0227 Ω/mi)
-            500: 0.0141,  # Ω/km (converted from 0.0227 Ω/mi)
-            345: 0.0283,  # Ω/km (converted from 0.0455 Ω/mi)
-            232: 0.0450,  # Ω/km (estimated)
-            230: 0.0500,  # Ω/km (estimated)
-            220: 0.0700,  # Ω/km (estimated)
-            138: 0.0800,  # Ω/km (estimated)
-            69: 0.1200,  # Ω/km (estimated)
-        }
-
-        # Estimate line resistances
-        substations_df = df_substations_info.copy()
-
-        df_lines = calculate_line_resistances(
-            df_lines_final,
-            df_lines_EHV,
-            line_resistance,
-            trans_lines_within_FERC_filtered,
-            bus_ids_map,
-        )
-
-        # Build neutral points and transformer lookup
-        sub_look_up = {}
-        index = 0
-        for i, row in substations_df.iterrows():
-            buses = row["buses"]
-            for bus in sorted(buses):
-                sub_look_up[bus] = index
-                index += 1
-
-        for i, row in substations_df.iterrows():
-            if row["name"] != "Substation 7":
-                sub_look_up[row["name"]] = index
-                index += 1
-
-        # Pickle the substation_buses, bus_ids_map, and sub_look_up
-        with open(substation_buses_pkl, "wb") as f:
-            pickle.dump(substation_buses, f)
-
-        with open(bus_ids_map_pkl, "wb") as f:
-            pickle.dump(bus_ids_map, f)
-
-        with open(sub_look_up_pkl, "wb") as f:
-            pickle.dump(sub_look_up, f)
-
-        # Save transmission lines and substations info to CSV
-        df_lines.to_csv(transmission_lines_csv, index=False)
-        df_substations_info.to_csv(substation_info_csv, index=False)
-
-    return substation_buses, bus_ids_map, sub_look_up, df_lines, substations_df
-
-
-def random_admittance_matrix(
-    substation_buses,
-    df_transformers,
-    bus_ids_map,
-    sub_look_up,
-    df_lines,
-    substations_df,
-    evan_data=False,
-    transformer_counts_dict=None,
-):
-    # ..................................................
-    # Create a dictionary to store the resistance values
-    # Only HV distribution and transmission substations are taken into consideration
-    # We consider a Delta-Wye architecture for substations with a single bus
-    # Although, a dummy LV bus is introduced where GIC flow is zero
-    # ..................................................
-    transformer_winding_resistances = {
-        "GY-GY-D": {"pri": 0.2, "sec": 0.1},
-        "GY-GY": {"pri": 0.04, "sec": 0.06},
-        "Auto": {"pri": 0.04, "sec": 0.06},
-        "GSU": {"pri": 0.15, "sec": float("inf")},
-        "Tee": {"pri": 0.01, "sec": 0.01},
-        "GY-D": {"pri": 0.05, "sec": 0.1},
-    }
-
-    if evan_data:
-        transformers_data = get_transformer_data_evan(
-            substation_buses, transformer_counts_dict
-        )
-        # Create a transformer df
-        df_transformers = pd.DataFrame(transformers_data)
-
-    # Transformer W1 and W2
-    df_transformers["W1"] = df_transformers["type"].apply(
-        lambda x: transformer_winding_resistances[x]["pri"]
-    )
-    df_transformers["W2"] = df_transformers["type"].apply(
-        lambda x: transformer_winding_resistances[x]["sec"]
-    )
-
-    # Apply bus_id map
-    df_transformers["bus1"] = df_transformers["bus1_id"].map(bus_ids_map)
-    df_transformers["bus2"] = df_transformers["bus2_id"].map(bus_ids_map)
-
-    # Merge transformers with lat and lon data
-    df_transformers = df_transformers.merge(
-        substations_df[["name", "latitude", "longitude"]],
-        left_on="sub_id",
-        right_on="name",
-        how="left",
-    )
-
-    # Rename name_x to name
-    df_transformers.rename(columns={"name_x": "name"}, inplace=True)
-
-    # Drop name_y
-    df_transformers.drop("name_y", axis=1, inplace=True)
-
-    # Useful cols
-    df_transformers = df_transformers[
-        ["sub_id", "name", "type", "bus1", "bus2", "W1", "W2", "latitude", "longitude"]
-    ]
-
-    sub_ref = dict(zip(substations_df.name, substations_df.buses))
-
-    # Neutral points in a trafor
-    df_transformers["sub"] = df_transformers.bus1.apply(
-        lambda x: find_substation_name(x, sub_ref)
-    )
-    df_transformers["neutral_point"] = df_transformers["sub"].apply(
-        lambda x: sub_look_up.get(x, None)
-    )
-
-    # Build network admittance
-    Y = network_admittance(sub_look_up, sub_ref, df_transformers, df_lines)
-    Y_e = earthing_impedance(sub_look_up, substations_df)
-
-    return Y, Y_e, df_transformers
-
-
-# %%
-
 if __name__ == "__main__":
+
     admittances = []
     # Get substation buses
     substation_buses, bus_ids_map, sub_look_up, df_lines, substations_df = (
         process_substation_buses(
-            data_loc,
+            DATA_LOC,
         )
     )
 
-    for i in range(100):
+    df_transformers = get_transformer_samples(substation_buses)
+
+    for i, df_transformer in enumerate(df_transformers):
         logger.info(f"Building admittance matrix {i + 1}...")
         Y, Y_e = random_admittance_matrix(
-            substation_buses, bus_ids_map, sub_look_up, df_lines, substations_df
+            substation_buses, df_transformer, bus_ids_map, sub_look_up, df_lines, substations_df,
         )
         admittances.append(Y)
         break
-
-# %%

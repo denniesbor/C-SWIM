@@ -14,13 +14,12 @@ Authors:
 Date:
 - February 2025
 """
-import sys
+
 import os
 import pickle
 import time
-from pathlib import Path
 from datetime import datetime, timedelta
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
 from functools import partial
 import warnings
 
@@ -32,7 +31,12 @@ import numpy as np
 import scipy.special
 import powerlaw
 
-DATA_LOC = Path(__file__).resolve().parent / '..' / "data"
+
+from configs import setup_logger, get_data_dir
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/stat_analysis.log")
 
 
 def storm_overlaps(storm_start, storm_end, event_start, event_end=None):
@@ -217,16 +221,16 @@ def confidence_limits(results, return_periods):
         for period in return_periods:
             lower, median, upper = confidence_intervals[period]
             if not np.isnan(median[i]):
-                print(f"---{period}-year event: {median[i]:.2f} ({lower[i]:.2f} - {upper[i]:.2f})")
+                logger.info(f"---{period}-year event: {median[i]:.2f} ({lower[i]:.2f} - {upper[i]:.2f})")
             else:
-                print(f"---{period}-year event: No valid data")
+                logger.error(f"---{period}-year event: No valid data")
 
 
 def calculate_confidence_intervals(results):
     confidence_intervals = {}
     for period, data in results.items():
         if data.size == 0:
-            print(f"No valid data for period {period}")
+            logger.error(f"No valid data for period {period}")
             confidence_intervals[period] = (np.nan, np.nan, np.nan)
             continue
 
@@ -397,4 +401,4 @@ if __name__ == "__main__":
     end_time = time.time()
 
     elapsed_time = end_time - start_time
-    print(f"Elapsed time: {elapsed_time:.6f} seconds")
+    logger.info(f"Elapsed time: {elapsed_time:.6f} seconds")
