@@ -1,5 +1,4 @@
 # %%
-
 # ...........................................................................................
 # Visualize the GICs along the transmission lines and transformers in the network
 # ...........................................................................................
@@ -7,6 +6,7 @@ import os
 import sys
 import gc
 import string
+import logging
 import pickle
 from pathlib import Path
 from memory_profiler import profile
@@ -27,42 +27,32 @@ import geopandas as gpd
 
 from configs import setup_logger, get_data_dir
 
-# Set font as Times New Roman
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+logger = setup_logger(log_file="logs/d_nrcan_mag.log")
+
+# Set font as times new roman
 plt.rcParams["font.family"] = "Times New Roman"
 
-# Lower case alphabet for subplot labeling
+# lower case alphabet
 alphabet = string.ascii_lowercase
 
-# Get data directory and configure logger
-DATA_LOC = get_data_dir()
-logger = setup_logger(log_file="logs/viz.log")
+
+# Data loc
+data_loc = DATA_LOC
+parent_dir = data_loc.parent.parent
+
+# %%
+
+grid_regions_gdf = gpd.read_file(data_loc / "nerc_gdf.geojson")
+
+# Load data from preprocess storm data
+df_lines_path = data_loc / "final_tl_data.pkl"
+
+line_coords_file = data_loc / "line_coords.pkl"
 
 
-# Load NERC grid regions
-grid_regions_gdf = gpd.read_file(DATA_LOC / "nerc_gdf.geojson")
-
-# Load data file paths
-df_lines_path = DATA_LOC / "final_tl_data.pkl"
-line_coords_file = DATA_LOC / "line_coords.pkl"
-
-# E-field grid paths
-grid_e_100_path = DATA_LOC / "grid_e_100.pkl"  # 100 year e-field
-grid_e_500_path = DATA_LOC / "grid_e_500.pkl"  # 500 year e-field
-grid_e_1000_path = DATA_LOC / "grid_e_1000.pkl"  # 1000 year e-field
-grid_e_gannon_path = DATA_LOC / "grid_e_gannon.pkl"  # Gannon storm e-field
-
-# Load GIC data files
-df_gic_halloween = pd.read_csv(DATA_LOC / "gic_halloween.csv")
-df_gic_st_patricks = pd.read_csv(DATA_LOC / "gic_st_patricks.csv")
-df_gic_gannon = pd.read_csv(DATA_LOC / "gic_gannon.csv")
-df_gic_100 = pd.read_csv(DATA_LOC / "gic_100.csv")
-df_gic_500 = pd.read_csv(DATA_LOC / "gic_500.csv")
-df_gic_1000 = pd.read_csv(DATA_LOC / "gic_1000.csv")
-
-# Load winding GIC data (using mean)
-df_gic = pd.read_csv(DATA_LOC / "econ_data" / "winding_mean_df.csv")
-
-
+# Read pickle function
 def read_pickle(file):
     """
     Read data from a pickle file.
@@ -75,26 +65,45 @@ def read_pickle(file):
     Returns
     -------
     object
-        Unpickled object
+        Unpickled data object
     """
     with open(file, "rb") as f:
         return pickle.load(f)
 
 
-# Load line coordinates and transmission line data
 line_coordinates, valid_indices = read_pickle(line_coords_file)
 df_lines, mt_coords, mt_names = read_pickle(df_lines_path)
 
+df_lines = read_pickle(data_loc / "df_lines.pkl")
 
+# Read precomputed  e_fields grid  for 75, 100, 150, 200, 250, 500, 1000 years
+
+grid_e_75_path = data_loc / "grid_e_75.pkl"  # 50 year e-field
+grid_e_100_path = data_loc / "grid_e_100.pkl"  # 100 year e-field
+grid_e_150 = data_loc / "grid_e_150.pkl"  # 150 year e-field
+grid_e_200_path = data_loc / "grid_e_200.pkl"  # 200 year e-field
+grid_e_250_path = data_loc / "grid_e_250.pkl"  # 250 year e-field
+grid_e_500_path = data_loc / "grid_e_500.pkl"  # 500 year e-field
+grid_e_1000_path = data_loc / "grid_e_1000.pkl"  # 1000 year e-field
+grid_e_gannon_path = data_loc / "grid_e_gannon.pkl"  # Gannon storm e-field
+
+
+# Read GIC data
+# df_gic = pd.read_csv(data_loc / "econ_data" / "winding_median_df.csv")
+df_gic = pd.read_csv(parent_dir / "econ_data" / "gic_mean_df_1.csv")
+
+
+# %%
+# Line_collection
 def plot_transmission_lines(
     ax,
     line_coordinates,
     values,
+    min_value,
+    max_value,
     cmap="viridis",
     line_width=1,
     alpha=0.7,
-    vmin=None,
-    vmax=None,
 ):
     """
     Plot transmission lines on a map with color based on values.
@@ -106,36 +115,56 @@ def plot_transmission_lines(
     line_coordinates : list
         List of numpy arrays containing line coordinates
     values : array-like
-        Values for coloring the lines
-    cmap : str, optional
-        Colormap name, default is 'viridis'
-    line_width : float, optional
-        Width of the lines, default is 1
-    alpha : float, optional
-        Transparency of the lines, default is 0.7
-    vmin : float, optional
+        List or array of values for coloring the lines
+    min_value : float
         Minimum value for color normalization
-    vmax : float, optional
+    max_value : float
         Maximum value for color normalization
+    cmap : str, optional
+        Colormap name (default: 'viridis')
+    line_width : float, optional
+        Width of the lines (default: 1)
+    alpha : float, optional
+        Transparency of the lines (default: 0.7)
 
     Returns
     -------
-    matplotlib.collections.LineCollection
-        The plotted LineCollection
+    LineCollection or None
+        The plotted LineCollection or None if no valid line segments
     """
     if not line_coordinates:
         logger.error("No valid line segments found.")
         return None
 
-    max_value = vmax if vmax is not None else np.max(values)
-    min_value = vmin if vmin is not None else np.min(values)
+    boundaries = [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        100,
+        150,
+        200,
+        250,
+        300,
+        350,
+        400,
+        500,
+        600,
+        700,
+        800,
+        900,
+        1000,
+        1100,
+        1200,
+    ]
 
-    norm = colors.SymLogNorm(
-        linthresh=(max_value * 0.25),
-        linscale=1.0,
-        vmin=max_value,
-        vmax=min_value,
-    )
+    norm = colors.BoundaryNorm(boundaries, ncolors=256)
 
     line_collection = LineCollection(
         line_coordinates,
@@ -148,29 +177,33 @@ def plot_transmission_lines(
 
     line_collection.set_array(values)
     ax.add_collection(line_collection)
+
     return line_collection
 
 
+# %%
+# Set up map
 def setup_map(ax, spatial_extent=[-120, -75, 25, 50]):
     """
-    Set up a map with standard features and extent.
+    Set up a map with cartopy features.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
         Matplotlib axis with cartopy projection
     spatial_extent : list, optional
-        Map extent as [west, east, south, north], default is continental US
+        Spatial boundaries [min_lon, max_lon, min_lat, max_lat]
 
     Returns
     -------
     matplotlib.axes.Axes
-        Configured map axis
+        The modified axes object
     """
     ax.set_extent(spatial_extent, ccrs.PlateCarree())
 
     ax.add_feature(cfeature.LAND, facecolor="#F0F0F0")
     ax.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor="grey")
+    # ax.add_feature(cfeature.STATES, linewidth=0.4, edgecolor="#E6F3FF")
     ax.add_feature(cfeature.LAKES, alpha=0.5, linewidth=0.5, edgecolor="grey")
 
     gl = ax.gridlines(
@@ -180,6 +213,7 @@ def setup_map(ax, spatial_extent=[-120, -75, 25, 50]):
     return ax
 
 
+# Add grid regions set up
 def add_ferc_regions(ax, grid_regions_gdf=grid_regions_gdf, zorder=2):
     """
     Add grid region boundaries to the map.
@@ -188,50 +222,52 @@ def add_ferc_regions(ax, grid_regions_gdf=grid_regions_gdf, zorder=2):
     ----------
     ax : matplotlib.axes.Axes
         The axis to which the boundaries will be added
-    grid_regions_gdf : GeoDataFrame, optional
+    grid_regions_gdf : geopandas.GeoDataFrame
         GeoDataFrame containing the grid regions
     zorder : int, optional
-        Drawing order for the boundaries, default is 2
+        Drawing order for the boundaries (default is 2)
 
     Returns
     -------
     matplotlib.axes.Axes
-        Map axis with grid regions added
+        The modified axes object
     """
     # Add boundaries without filling
-    for _, region in grid_regions_gdf.iterrows():
+    for idx, region in grid_regions_gdf.iterrows():
         ax.add_geometries(
             [region.geometry],
             crs=ccrs.PlateCarree(),
             edgecolor="grey",
             facecolor="none",
             linewidth=0.8,
-            alpha=1,
+            alpha=1,  # Fully opaque
             zorder=zorder,
         )
 
     return ax
 
 
+# %%
+# Plot for MT sites
 def plot_mt_sites_e_fields(ax, mt_coordinates, e_fields, cmap="viridis"):
     """
-    Plot magnetotelluric sites with E-field values as scatter points.
+    Plot MT sites with E-field values.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
         Matplotlib axis with cartopy projection
-    mt_coordinates : ndarray
-        Array of site coordinates as [latitude, longitude]
-    e_fields : ndarray
-        E-field values for each site
+    mt_coordinates : array-like
+        Array containing MT site coordinates
+    e_fields : array-like
+        Array of E-field values
     cmap : str, optional
-        Colormap name, default is 'viridis'
+        Colormap name (default: 'viridis')
 
     Returns
     -------
     tuple
-        Tuple containing the scatter plot
+        Tuple containing the scatter plot object
     """
     sizes = 1 / (1 - np.log10(e_fields / np.nanmax(e_fields)))
 
@@ -248,15 +284,17 @@ def plot_mt_sites_e_fields(ax, mt_coordinates, e_fields, cmap="viridis"):
     return (scatter,)
 
 
+# %%
+@profile
 def plot_mt_sites_e_fields_contour(
     ax,
     data,
+    global_min,
+    global_max,
     cmap="viridis",
-    global_min=None,
-    global_max=None,
 ):
     """
-    Plot contour map of E-field values with custom normalization.
+    Create a contour plot of E-field values.
 
     Parameters
     ----------
@@ -264,12 +302,12 @@ def plot_mt_sites_e_fields_contour(
         Matplotlib axis with cartopy projection
     data : tuple
         Tuple containing (grid_x, grid_y, grid_z, e_fields)
+    global_min : float
+        Global minimum value for color normalization
+    global_max : float
+        Global maximum value for color normalization
     cmap : str, optional
-        Colormap name, default is 'viridis'
-    global_min : float, optional
-        Minimum value for normalization
-    global_max : float, optional
-        Maximum value for normalization
+        Colormap name (default: 'viridis')
 
     Returns
     -------
@@ -277,8 +315,35 @@ def plot_mt_sites_e_fields_contour(
         Tuple containing (mesh, current_min, current_max)
     """
     grid_x, grid_y, grid_z, e_fields = data
-    global_min = np.nanmin(e_fields) if global_min is None else global_min
-    global_max = np.nanmax(e_fields) if global_max is None else global_max
+
+    boundaries = [
+        0,
+        0.5,
+        1,
+        2,
+        4,
+        6,
+        8,
+        10,
+        14,
+        16,
+        17,
+        20,
+        24,
+        28,
+        32,
+        36,
+        40,
+        42,
+    ]
+    norm = colors.BoundaryNorm(boundaries, ncolors=256)
+
+    norm = colors.SymLogNorm(
+        linthresh=(0.03 * global_max),
+        linscale=0.1,
+        vmin=global_min,
+        vmax=global_max,
+    )
 
     # Create the contour plot
     mesh = ax.pcolormesh(
@@ -287,9 +352,7 @@ def plot_mt_sites_e_fields_contour(
         grid_z,
         cmap=cmap,
         alpha=0.7,
-        norm=colors.SymLogNorm(
-            linthresh=(global_max * 0.1), linscale=1.0, vmin=global_min, vmax=global_max
-        ),
+        norm=norm,
         shading="gouraud",
         transform=ccrs.PlateCarree(),
     )
@@ -300,40 +363,42 @@ def plot_mt_sites_e_fields_contour(
     del grid_x, grid_y, grid_z
     gc.collect()
 
+    # Add scatter plot for actual MT site locations
     return mesh, current_min, current_max
 
 
+# %%
 def create_custom_colorbar_e_field(
     ax, obj, label, current_min, current_max, title, vmin, vmax, e_field=True
 ):
     """
-    Create a custom colorbar with tailored tick formatting.
+    Create a custom colorbar for E-field or transmission line visualizations.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        Parent axis for colorbar placement
+        Matplotlib axis to which the colorbar belongs
     obj : matplotlib.cm.ScalarMappable
-        The mappable object (plot, mesh, etc.) to create a colorbar for
+        Object to which the colorbar is mapped
     label : str
-        Colorbar label
+        Label for the colorbar
     current_min : float
-        Current minimum value
+        Current minimum value in the data
     current_max : float
-        Current maximum value
+        Current maximum value in the data
     title : str
-        Colorbar title
+        Title for the colorbar
     vmin : float
-        Global minimum value for colorbar
+        Global minimum value
     vmax : float
-        Global maximum value for colorbar
+        Global maximum value
     e_field : bool, optional
-        If True, use E-field formatting, otherwise use GIC formatting
+        Whether the colorbar is for E-field data (True) or not (False)
 
     Returns
     -------
     matplotlib.colorbar.Colorbar
-        Created colorbar object
+        The created colorbar
     """
     # Create a new axis for the colorbar
     bbox = ax.get_position()
@@ -369,7 +434,7 @@ def create_custom_colorbar_e_field(
             if x < 0.01:
                 return f"{x:.2e}"
             else:
-                return f"{x:.0f}"  # No decimal places for integers
+                return f"{x:.0f}"  # No decimal places for integers between 1 and 999
 
         formatted_labels = [tick_formatter(tick, None) for tick in custom_ticks]
         for i, tick in enumerate(custom_ticks):
@@ -405,7 +470,7 @@ def create_custom_colorbar_e_field(
             if x < 1 or x >= 1001:
                 return f"{x:.0f}"
             else:
-                return f"{x:.0f}"  # No decimal places for integers
+                return f"{x:.0f}"  # No decimal places for integers between 1 and 999
 
         formatted_labels = [tick_formatter(tick, None) for tick in custom_ticks]
         for i, tick in enumerate(custom_ticks):
@@ -421,21 +486,7 @@ def create_custom_colorbar_e_field(
     return colorbar
 
 
-# -----
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import matplotlib.colors as colors
-import cartopy.crs as ccrs
-from pathlib import Path
-import gc
-import logging
-
-# Configure logger
-logger = logging.getLogger(__name__)
-
-
-def carto(
+def carto_e_field(
     ax,
     label_titles,
     spatial_extent=[-120, -75, 25, 50],
@@ -449,52 +500,43 @@ def carto(
     data_e=None,
     global_min=None,
     global_max=None,
-    legend_width=0.7,
-    num_bins=10,
-    norm_val=1,
 ):
     """
-    Create a cartographic visualization of grid data.
+    Create a cartographic visualization of E-field data and/or transmission lines.
 
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        The axes on which to plot.
+        Matplotlib axis with cartopy projection
     label_titles : dict
-        Dictionary mapping column names to display titles.
+        Dictionary mapping column names to display titles
     spatial_extent : list, optional
-        Spatial boundaries [min_lon, max_lon, min_lat, max_lat].
+        Spatial boundaries [min_lon, max_lon, min_lat, max_lat]
     add_grid_regions : bool, optional
-        Whether to add FERC regions to the map.
+        Whether to add FERC regions to the map
     df_tl : pandas.DataFrame, optional
-        DataFrame containing transmission line data.
+        DataFrame containing transmission line data
     df_substations : pandas.DataFrame, optional
-        DataFrame containing substation data.
+        DataFrame containing substation data (not used in this function)
     cmap : str, optional
-        Colormap name to use for plotting.
+        Colormap name (default: 'viridis')
     value_column : str, optional
-        Column name in df_tl or df_substations to use for values.
+        Column name in df_tl for values
     show_legend : bool, optional
-        Whether to show a legend.
-    gic_global_vals : numpy.ndarray, optional
-        Global values for GIC normalization.
+        Whether to show a legend (not used in this function)
+    gic_global_vals : array-like, optional
+        Global GIC values (not used in this function)
     data_e : tuple, optional
-        Data for E-field visualization.
+        Tuple containing E-field data
     global_min : float, optional
-        Global minimum value for color scaling.
+        Global minimum value for color normalization
     global_max : float, optional
-        Global maximum value for color scaling.
-    legend_width : float, optional
-        Width of the legend in inches.
-    num_bins : int, optional
-        Number of bins for discretizing values.
-    norm_val : float, optional
-        Normalization value for sizing.
+        Global maximum value for color normalization
 
     Returns
     -------
-    matplotlib.axes.Axes or tuple
-        The modified axes object, or a tuple of (ax, legend_ax) if show_legend is True.
+    matplotlib.axes.Axes
+        The modified axes object
     """
     ax = setup_map(ax, spatial_extent)
 
@@ -506,16 +548,14 @@ def carto(
             logger.error(f"Column '{value_column}' not found in df_tl")
         else:
             values = np.abs(df_tl[value_column].values)
-            global_min = np.nanmin(values) if global_min is None else global_min
-            global_max = np.nanmax(values) if global_max is None else global_max
 
             line_collection = plot_transmission_lines(
                 ax,
                 line_coordinates,
                 values,
+                global_min,
+                global_max,
                 cmap=cmap,
-                vmin=global_min,
-                vmax=global_max,
             )
 
             # Set colorbar
@@ -539,42 +579,15 @@ def carto(
             else:
                 logger.error("Failed to create line collection.")
 
-    if df_substations is not None and value_column is not None:
-        if all_gic_values is not None:
-            gic_global_vals = np.abs(np.array(all_gic_values))
-        if value_column not in df_substations.columns:
-            logger.error(f"Column '{value_column}' not found in df_substations")
-        else:
-            gic_values = df_substations[value_column].values
-
-        scatter, bins, cmap_obj, norm = plot_transformer_gic(
-            ax,
-            df_substations,
-            gic_values,
-            all_gic_values=gic_global_vals,
-            cmap=cmap,
-            num_bins=num_bins,
-            norm_val=norm_val,
-        )
-
-        if show_legend:
-            legend_ax = create_gic_bubble_legend(
-                ax,
-                bins,
-                cmap,
-                title="GIC (A/ph)",
-                legend_width=legend_width,
-                norm_val=norm_val,
-            )
-            return ax, legend_ax
+            logger.info("Line collection added to the axis.")
 
     if data_e is not None:
         mesh, current_min, current_max = plot_mt_sites_e_fields_contour(
             ax,
             data_e,
-            cmap=cmap,
             global_min=global_min,
             global_max=global_max,
+            cmap=cmap,
         )
 
         # Create custom colorbar
@@ -583,8 +596,8 @@ def carto(
             mesh,
             current_min=current_min,
             current_max=current_max,
-            label="E Field (V/km) \n (log scale)",
-            title="E Field (V/km) \n (log scale)",
+            label="E Field (V/km)",
+            title="E Field (V/km)",
             vmin=global_min,
             vmax=global_max,
             e_field=True,
@@ -596,23 +609,24 @@ def carto(
     return ax
 
 
-def calculate_global_bins(all_gic_values, num_bins=5, threshold=10):
+# %%
+def calculate_global_bins(all_gic_values, num_bins=7, threshold=10):
     """
     Calculate log-normalized bins from the minimum threshold to the maximum value.
 
     Parameters
     ----------
-    all_gic_values : numpy.ndarray
-        Array of GIC values to bin.
+    all_gic_values : array-like
+        Array of GIC values
     num_bins : int, optional
-        Number of bins to create.
+        Number of bins to create
     threshold : float, optional
-        Minimum threshold for filtering values.
+        Minimum threshold for filtering values
 
     Returns
     -------
-    numpy.ndarray
-        Array of bin boundaries.
+    array-like
+        Array of bin boundaries
     """
     abs_gic_values = np.abs(all_gic_values)
     filtered_values = abs_gic_values[abs_gic_values >= threshold]
@@ -623,16 +637,15 @@ def calculate_global_bins(all_gic_values, num_bins=5, threshold=10):
 
     max_value = filtered_values.max()
 
-    # Create log-spaced bins
-    log_min = np.log10(threshold)
-    log_max = np.log10(max_value)
-    log_bins = np.logspace(log_min, log_max, num_bins)
+    boundaries = [0, 10, 25, 40, 80, 120, 160, 200, 220]
 
-    # Round the bin values for cleaner presentation
-    bins = np.round(log_bins, 2)
-
-    # Remove any duplicate bins that might occur due to rounding
-    bins = np.unique(bins)
+    bins = []
+    for b in boundaries:
+        if b <= max_value:
+            bins.append(b)
+        else:
+            bins.append(b)
+            break
 
     return bins
 
@@ -641,27 +654,27 @@ def get_discrete_sizes_and_colors(
     gic_values, global_bins, cmap, min_size=10, max_size=500, threshold=10
 ):
     """
-    Get discrete sizes and colors for visualization based on binned values.
+    Get discrete sizes and colors based on binned values.
 
     Parameters
     ----------
-    gic_values : numpy.ndarray
-        Array of GIC values.
-    global_bins : numpy.ndarray
-        Bin boundaries for discretization.
+    gic_values : array-like
+        Array of GIC values
+    global_bins : array-like
+        Array of bin boundaries
     cmap : str
-        Colormap name.
+        Colormap name
     min_size : float, optional
-        Minimum marker size.
+        Minimum marker size
     max_size : float, optional
-        Maximum marker size.
+        Maximum marker size
     threshold : float, optional
-        Minimum threshold for filtering values.
+        Minimum threshold for filtering values
 
     Returns
     -------
     tuple
-        Tuple of (discrete_sizes, discrete_colors, global_bins, mask).
+        Tuple containing (discrete_sizes, discrete_colors, global_bins, mask)
     """
     abs_gic_values = np.abs(gic_values)
 
@@ -690,19 +703,19 @@ def create_legend_scatter(bins, cmap, min_size=10, max_size=500):
 
     Parameters
     ----------
-    bins : numpy.ndarray
-        Bin boundaries.
+    bins : array-like
+        Array of bin boundaries
     cmap : str
-        Colormap name.
+        Colormap name
     min_size : float, optional
-        Minimum marker size.
+        Minimum marker size
     max_size : float, optional
-        Maximum marker size.
+        Maximum marker size
 
     Returns
     -------
     tuple
-        Tuple of (x_positions, y_positions, sizes, colors).
+        Tuple containing (x_positions, y_positions, sizes, colors)
     """
     num_bins = len(bins)
     y_pos = np.linspace(0, 1, num_bins)
@@ -722,12 +735,12 @@ def format_with_commas(number):
     Parameters
     ----------
     number : int or float
-        Number to format.
+        Number to format
 
     Returns
     -------
     str
-        Formatted number string.
+        Formatted number string
     """
     return f"{number:,}"
 
@@ -741,22 +754,22 @@ def create_gic_bubble_legend(
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        The axes to which the legend belongs.
-    bins : numpy.ndarray
-        Bin boundaries.
+        Matplotlib axis to which the legend belongs
+    bins : array-like
+        Array of bin boundaries
     cmap : str
-        Colormap name.
+        Colormap name
     title : str, optional
-        Legend title.
+        Title for the legend
     legend_width : float, optional
-        Width of the legend in points.
+        Width of the legend in points
     norm_val : float, optional
-        Normalization value for sizing.
+        Normalization value for sizing
 
     Returns
     -------
     matplotlib.axes.Axes
-        The legend axes.
+        The legend axes
     """
     fig = ax.figure
     fig_width, fig_height = fig.get_size_inches()
@@ -783,6 +796,8 @@ def create_gic_bubble_legend(
     # Adjust y_pos to prevent clipping
     y_padding = 0.05  # 5% padding at top and bottom
     y_pos = y_pos * (1 - 2 * y_padding) + y_padding
+
+    print(len(x_pos), len(y_pos), len(sizes), len(colors))
 
     # Plot the legend bubbles
     legend_ax.scatter(x_pos, y_pos, s=sizes, c=colors, alpha=0.8, edgecolors=colors)
@@ -823,34 +838,34 @@ def plot_transformer_gic(
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        The axes on which to plot.
+        Matplotlib axis with cartopy projection
     df_substations : pandas.DataFrame
-        DataFrame containing substation data.
-    quant_values : numpy.ndarray
-        Array of GIC values to plot.
+        DataFrame containing substation data
+    quant_values : array-like
+        Array of GIC values
     cmap : str
-        Colormap name.
+        Colormap name
     alpha : float, optional
-        Transparency of markers.
+        Transparency of markers
     min_size : float, optional
-        Minimum marker size.
+        Minimum marker size
     max_size : float, optional
-        Maximum marker size.
+        Maximum marker size
     zorder : int, optional
-        Z-order for plotting (determines which elements appear on top).
-    all_gic_values : numpy.ndarray, optional
-        Global values for binning.
+        Z-order for plotting
+    all_gic_values : array-like, optional
+        Global GIC values for binning
     num_bins : int, optional
-        Number of bins to create.
+        Number of bins to create
     threshold : float, optional
-        Minimum threshold for filtering values.
+        Minimum threshold for filtering values
     norm_val : float, optional
-        Normalization value for sizing.
+        Normalization value for sizing
 
     Returns
     -------
     tuple
-        Tuple of (scatter, bins, cmap_obj, norm).
+        Tuple containing (scatter, bins, cmap_obj, norm)
     """
     if all_gic_values is not None:
         global_values = np.abs(all_gic_values)
@@ -892,6 +907,134 @@ def plot_transformer_gic(
     return scatter, bins, plt.get_cmap(cmap), norm
 
 
+# %%
+# Cartopy plot for the transformers
+def carto_gic(
+    ax,
+    label_titles,
+    spatial_extent=[-120, -75, 25, 50],
+    add_grid_regions=True,
+    df_tl=None,
+    df_substations=None,
+    cmap="viridis",
+    value_column=None,
+    show_legend=False,
+    global_min=None,
+    all_gic_values=None,
+    global_max=None,
+    legend_width=0.7,
+    num_bins=10,
+    norm_val=1,
+):
+    """
+    Create a cartographic visualization of GIC data for transformers.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Matplotlib axis with cartopy projection
+    label_titles : dict
+        Dictionary mapping column names to display titles
+    spatial_extent : list, optional
+        Spatial boundaries [min_lon, max_lon, min_lat, max_lat]
+    add_grid_regions : bool, optional
+        Whether to add FERC regions to the map
+    df_tl : pandas.DataFrame, optional
+        DataFrame containing transmission line data
+    df_substations : pandas.DataFrame, optional
+        DataFrame containing substation data
+    cmap : str, optional
+        Colormap name (default: 'viridis')
+    value_column : str, optional
+        Column name in df_substations for values
+    show_legend : bool, optional
+        Whether to show a legend
+    global_min : float, optional
+        Global minimum value for color normalization
+    all_gic_values : array-like, optional
+        Global GIC values for binning
+    global_max : float, optional
+        Global maximum value for color normalization
+    legend_width : float, optional
+        Width of the legend in points
+    num_bins : int, optional
+        Number of bins to create
+    norm_val : float, optional
+        Normalization value for sizing
+
+    Returns
+    -------
+    matplotlib.axes.Axes or tuple
+        The modified axes object, or a tuple of (ax, legend_ax) if show_legend is True
+    """
+    ax = setup_map(ax, spatial_extent)
+
+    if add_grid_regions:
+        ax = add_ferc_regions(ax)
+
+    if df_tl is not None and value_column is not None:
+        if value_column not in df_tl.columns:
+            logger.error(f"Column '{value_column}' not found in df_tl")
+        else:
+            values = np.abs(df_tl[value_column].values)
+            line_collection = plot_transmission_lines(
+                ax, line_coordinates, values, global_min, global_max, cmap=cmap
+            )
+            ax.add_collection(line_collection)
+
+            # Set colorbar
+            vmin, vmax = values.min(), values.max()
+            label_title = label_titles.get(value_column, value_column)
+
+            if line_collection is not None:
+                create_custom_colorbar_e_field(
+                    ax,
+                    line_collection,
+                    label=label_title,
+                    current_min=vmin,
+                    current_max=vmax,
+                    title=label_title,
+                    vmin=global_min,
+                    vmax=global_max,
+                    e_field=False,
+                )
+            else:
+                logger.error("Failed to create line collection.")
+
+    if df_substations is not None and value_column is not None:
+        if value_column not in df_substations.columns:
+            logger.error(f"Column '{value_column}' not found in df_substations")
+        else:
+            gic_values = df_substations[value_column].values
+
+        scatter, bins, cmap_obj, norm = plot_transformer_gic(
+            ax,
+            df_substations,
+            gic_values,
+            all_gic_values=all_gic_values,
+            cmap=cmap,
+            num_bins=num_bins,
+            norm_val=norm_val,
+        )
+
+        if show_legend:
+            legend_ax = create_gic_bubble_legend(
+                ax,
+                bins,
+                cmap,
+                title="GIC (A/ph)",
+                legend_width=legend_width,
+                norm_val=norm_val,
+            )
+            return ax, legend_ax
+
+    return ax
+
+
+# %%
+
+
+# Function to plot GICs for transformers
 def create_gic_plots(
     df, spatial_extent=[-120, -75, 25, 50], cmap="YlOrRd", norm_val=2, storm_col=None
 ):
@@ -901,20 +1044,20 @@ def create_gic_plots(
     Parameters
     ----------
     df : pandas.DataFrame
-        DataFrame containing GIC data.
+        DataFrame containing GIC data
     spatial_extent : list, optional
-        Spatial boundaries [min_lon, max_lon, min_lat, max_lat].
+        Spatial boundaries [min_lon, max_lon, min_lat, max_lat]
     cmap : str, optional
-        Colormap name.
+        Colormap name (default: 'YlOrRd')
     norm_val : float, optional
-        Normalization value for sizing.
+        Normalization value for sizing
     storm_col : str, optional
-        Column name in df for storm data.
+        Column name in df for storm data
 
     Returns
     -------
     matplotlib.figure.Figure
-        The figure containing the plots.
+        The figure containing the plots
     """
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     fig = plt.figure(figsize=(8, 8))  # Adjust figure size as needed
@@ -956,7 +1099,7 @@ def create_gic_plots(
 
         df_type = df_gic[df_gic["Winding"] == winding]
 
-        ax_legend_ax = carto(
+        ax_legend_ax = carto_gic(
             ax,
             label_titles={},
             spatial_extent=spatial_extent,
@@ -971,10 +1114,13 @@ def create_gic_plots(
             num_bins=6,
             norm_val=norm_val,
         )
+
         title = f"({alphabet[i]}) {titles[winding]}"
 
-        # Add title and subtitle
+        # ax.set_title(title, fontsize=9, loc='left')
         ax.text(0.01, 1.14, title, transform=ax.transAxes, fontsize=9)
+
+        # Add subtitle
         ax.text(
             0.01, 1.03, f"{substitles[winding]}", transform=ax.transAxes, fontsize=8
         )
@@ -985,41 +1131,39 @@ def create_gic_plots(
 
 def main():
     """
-    Main function to run the visualization scripts.
+    Main function to run visualization routines.
+    Creates and saves various hazard maps and GIC plots.
     """
-    # Define data paths
-    DATA_LOC = Path("data")
+    # Create figures directory if it doesn't exist
     figures_path = Path("figures")
     figures_path.mkdir(exist_ok=True)
 
-    # Define alphabet for subplot labeling
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-
-    # Load the data
-    grid_e_100_path = DATA_LOC / "grid_e_100.pkl"
-    grid_e_500_path = DATA_LOC / "grid_e_500.pkl"
-    grid_e_1000_path = DATA_LOC / "grid_e_1000.pkl"
-    grid_e_gannon_path = DATA_LOC / "grid_e_gannon.pkl"
-
+    # Load the E-field data
+    _, _, _, e_fields_75 = read_pickle(grid_e_75_path)
     _, _, _, e_fields_100 = read_pickle(grid_e_100_path)
+    _, _, _, e_fields_100 = read_pickle(grid_e_100_path)
+    _, _, _, e_fields_200 = read_pickle(grid_e_200_path)
+    _, _, _, e_fields_250 = read_pickle(grid_e_250_path)
     _, _, _, e_fields_500 = read_pickle(grid_e_500_path)
     _, _, _, e_fields_1000 = read_pickle(grid_e_1000_path)
     _, _, _, e_fields_gannon = read_pickle(grid_e_gannon_path)
 
+    # Stack values for global min/max calculation
     stacked_vals_e = np.hstack(
-        [e_fields_100, e_fields_500, e_fields_1000, e_fields_gannon]
+        [e_fields_75, e_fields_100, e_fields_200, e_fields_250, e_fields_gannon]
     )
+    stacked_vals_e = np.abs(stacked_vals_e)
 
     max_e_field = np.nanmax(stacked_vals_e)
     min_e_field = np.nanmin(stacked_vals_e)
 
-    # Plot the GIC for 100 year hazard maps
+    # Plot 100-year hazard map
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     fig = plt.figure(figsize=(8, 7))
     gs = gridspec.GridSpec(1, 1, figure=fig, wspace=0.3, hspace=0.01)
     data_e_100 = read_pickle(grid_e_100_path)
     ax = fig.add_subplot(gs[0], projection=projection)
-    ax = carto(
+    ax = carto_e_field(
         ax,
         label_titles={},
         data_e=data_e_100,
@@ -1033,25 +1177,42 @@ def main():
 
     gc.collect()
 
-    # Hazard Maps (50, 100, 500, 1000 years)
+    # Plot 75-year hazard map
+    projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
+    fig = plt.figure(figsize=(8, 7))
+    gs = gridspec.GridSpec(1, 1, figure=fig, wspace=0.3, hspace=0.01)
+    data_e_75 = read_pickle(grid_e_75_path)
+    ax = fig.add_subplot(gs[0], projection=projection)
+    ax = carto_e_field(
+        ax,
+        label_titles={},
+        data_e=data_e_75,
+        cmap="magma",
+        global_max=max_e_field,
+        global_min=min_e_field,
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+    # Hazard Maps (transmission line voltage)
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     fig = plt.figure(figsize=(8, 7))
     gs = gridspec.GridSpec(1, 1, figure=fig, wspace=0.3, hspace=0.01)
 
     ax = fig.add_subplot(gs[0], projection=projection)
 
-    # Plot the GIC for 100 year hazard maps
-    # Global mins - stack the V_100, V_500, V_1000
-    stacked_values = np.hstack(
-        df_lines[["V_100", "V_500", "V_1000", "V_gannon"]].values
+    # Stack voltage values for global min/max calculation
+    stacked_values = np.abs(
+        np.hstack(df_lines[["V_100", "V_150", "V_250", "V_gannon"]].values)
     )
 
     global_min_v, global_max_v = np.nanmin(stacked_values), np.nanmax(stacked_values)
 
     offset = 1e-10
-    global_min = max(global_min_v, offset)  # Ensure global min is not zero
+    global_min_v = max(global_min_v, offset)  # Ensure global min is not zero
 
-    ax = carto(
+    ax = carto_e_field(
         ax,
         label_titles={"V_100": "V"},
         df_tl=df_lines,
@@ -1068,33 +1229,33 @@ def main():
     gc.collect()
 
     # Create multi-storm figure
-    years = [100, 500, 1000]
+    years = [100, 150, 250]
     field_names = {
         "gannon": "gannon_e",
         100: "e_field_100",
-        500: "e_field_500",
-        1000: "e_field_1000",
+        150: "e_field_150",
+        250: "e_field_250",
     }
 
     storm_titles = {
         "gannon": {
-            "e_field": "Gannon Storm E-field Hazard Map",
-            "v_field": "Gannon Storm Transmission Lines Hazard Map",
+            "e_field": "2024 Gannon Storm",
+            "v_field": "2024 Gannon Storm",
             "cmap": "magma",
         },
         100: {
-            "e_field": "100-year E-field Hazard Map",
-            "v_field": "100-year Transmission Lines Hazard Map",
+            "e_field": "1/100",
+            "v_field": "1/100",
             "cmap": "magma",
         },
-        500: {
-            "e_field": "500-year E-field Hazard Map",
-            "v_field": "500-year Transmission Lines Hazard Map",
+        150: {
+            "e_field": "1/150",
+            "v_field": "1/150",
             "cmap": "magma",
         },
-        1000: {
-            "e_field": "1000-year E-field Hazard Map",
-            "v_field": "1000-year Transmission Lines Hazard Map",
+        250: {
+            "e_field": "1/250",
+            "v_field": "1/250",
             "cmap": "magma",
         },
     }
@@ -1102,11 +1263,9 @@ def main():
     # Set up the figure with GridSpec
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     fig = plt.figure(figsize=(8, 10), dpi=300)
-    gs = gridspec.GridSpec(4, 2, figure=fig, wspace=0.3, hspace=0.1)
+    gs = gridspec.GridSpec(4, 2, figure=fig, wspace=0.3, hspace=0.25)
 
-    j = 0
     for i, year in enumerate(field_names.keys()):
-
         ax_e = fig.add_subplot(gs[i, 0], projection=projection)
 
         # V title
@@ -1118,9 +1277,9 @@ def main():
         # cmap
         cmap = storm_titles[year]["cmap"]
 
-        data_e = read_pickle(DATA_LOC / f"grid_e_{year}.pkl")
+        data_e = read_pickle(data_loc / f"grid_e_{year}.pkl")
 
-        ax_e = carto(
+        ax_e = carto_e_field(
             ax_e,
             label_titles={field_names[year]: f"E-field (V/km)"},
             data_e=data_e,
@@ -1130,17 +1289,14 @@ def main():
             global_min=min_e_field,
         )
 
-        ax_e.set_title(f"({alphabet[j]}) {title_e}", loc="left", fontsize=10)
-        j += 1
-
         # Transmission lines plot
         ax_tl = fig.add_subplot(gs[i, 1], projection=projection)
 
         v_nodal_column = f"V_{year}"
 
-        ax_tl = carto(
+        ax_tl = carto_e_field(
             ax_tl,
-            label_titles={v_nodal_column: f"Voltage (V)\n (log scale)"},
+            label_titles={v_nodal_column: "Voltage (V)"},
             df_tl=df_lines,
             cmap=cmap,
             value_column=v_nodal_column,
@@ -1148,12 +1304,45 @@ def main():
             global_min=global_min_v,
             global_max=global_max_v,
         )
-        ax_tl.set_title(
-            f"({alphabet[j]}) {title_v}",
-            loc="left",
-            fontsize=10,
+
+        if i == 0:
+            ax_e.text(
+                0.0,
+                1.3,
+                "Geoelectric Field Hazard Maps",
+                transform=ax_e.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
+
+            ax_tl.text(
+                0.0,
+                1.3,
+                "Transmission Line Voltages (Derived from E-Field)",
+                transform=ax_tl.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
+
+        ax_tl.text(
+            0.0,
+            1.1,
+            f"({alphabet[i]}) {title_e}",
+            transform=ax_tl.transAxes,
+            fontsize=11,
         )
-        j += 1
+
+        ax_e.text(
+            0.0,
+            1.1,
+            f"({alphabet[i]}) {title_v}",
+            transform=ax_e.transAxes,
+            fontsize=11,
+        )
 
         del v_nodal_column, title_e, title_v, ax_e, ax_tl  # Clear memory
 
@@ -1161,7 +1350,7 @@ def main():
     plt.show()
 
     # Save to figure
-    fig.savefig(figures_path / "hazard_maps.png", dpi=300, bbox_inches="tight")
+    fig.savefig(figures_path / "hazard_maps_latest.png", dpi=300, bbox_inches="tight")
 
     plt.close(fig)
     plt.clf()
@@ -1169,7 +1358,16 @@ def main():
     gc.collect()
 
     # Create GIC plots for different hazard scenarios
-    # 100-year hazard
+
+    # 75-year hazard maps
+    fig = create_gic_plots(
+        df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="75-year-hazard A/ph"
+    )
+    file_name = figures_path / "gic_plots_75.png"
+    fig.savefig(file_name, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # 100-year hazard maps
     fig = create_gic_plots(
         df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="100-year-hazard A/ph"
     )
@@ -1177,7 +1375,31 @@ def main():
     fig.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # 500-year hazard
+    # 150-year hazard maps
+    fig = create_gic_plots(
+        df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="150-year-hazard A/ph"
+    )
+    file_name = figures_path / "gic_plots_150.png"
+    fig.savefig(file_name, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # 200-year hazard maps
+    fig = create_gic_plots(
+        df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="200-year-hazard A/ph"
+    )
+    file_name = figures_path / "gic_plots_200.png"
+    fig.savefig(file_name, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # 250-year hazard maps
+    fig = create_gic_plots(
+        df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="250-year-hazard A/ph"
+    )
+    file_name = figures_path / "gic_plots_250.png"
+    fig.savefig(file_name, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # 500-year hazard maps
     fig = create_gic_plots(
         df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="500-year-hazard A/ph"
     )
@@ -1185,7 +1407,7 @@ def main():
     fig.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # 1000-year hazard
+    # 1000-year hazard maps
     fig = create_gic_plots(
         df_gic, cmap="YlOrRd", norm_val=0.5, storm_col="1000-year-hazard A/ph"
     )
@@ -1193,8 +1415,10 @@ def main():
     fig.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # Gannon storm
-    fig = create_gic_plots(df_gic, cmap="YlOrRd", norm_val=0.1, storm_col="Gannon A/ph")
+    # Gannon storm maps
+    fig = create_gic_plots(
+        df_gic, cmap="YlOrRd", norm_val=0.1, storm_col="gannon-year-hazard A/ph"
+    )
     file_name = figures_path / "gic_plots_gannon.png"
     fig.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
