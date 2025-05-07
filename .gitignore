@@ -1,0 +1,54 @@
+# Data files
+*.csv
+*.tif
+*.tiff
+*.geotiff
+*.tiles
+*.tile
+
+# Python files
+*.py[cod]
+__pycache__/
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment directories
+venv/
+ENV/
+env/
+.env/
+.venv/
+
+# Logs
+*.log
+logs/
+log/
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
