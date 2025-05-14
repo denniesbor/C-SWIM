@@ -10,6 +10,7 @@ Authors:
 Date:
 - February 2025
 """
+import os
 import pickle
 import sys
 import os
@@ -220,6 +221,8 @@ def load_and_process_data(DATA_LOC):
     folder = DATA_LOC / "Electric__Power_Transmission_Lines"
     with open(folder / filename, "rb") as f:
         trans_lines_gdf = pickle.load(f)
+        trans_lines_gdf.rename(
+            columns={"line_id": "LINE_ID"}, inplace=True)
 
     with open(DATA_LOC / "grid_processed" / "substation_to_line_voltages.pkl", "rb") as f:
         substation_to_line_voltages = pickle.load(f)
@@ -231,15 +234,18 @@ def load_and_process_data(DATA_LOC):
         trans_lines_within_FERC_filtered = pickle.load(f)
 
     # Process data
-    df_lines_EHV = df_lines_EHV[df_lines_EHV["line_id"].isin(trans_lines_gdf.line_id)]
+    df_lines_EHV = df_lines_EHV[df_lines_EHV["LINE_ID"].isin(trans_lines_gdf.LINE_ID)]
     ss_type_dict = dict(zip(ss_df["SS_ID"], ss_df["SS_TYPE"]))
 
     # Process grid mapping data
     grid_mapping = pd.read_csv(DATA_LOC / "grid_mapping.csv")
     grid_mapping["Attributes"] = grid_mapping["Attributes"].apply(eval)
-    transformers_df = grid_mapping[grid_mapping["Marker Label"] == "Transformer"]
+
+    # Fix: Add .copy() to avoid SettingWithCopyWarning
+    transformers_df = grid_mapping[grid_mapping["Marker Label"] == "Transformer"].copy()
     transformers_df["Role"] = transformers_df["Attributes"].apply(lambda x: x["role"])
     transformers_df["type"] = transformers_df["Attributes"].apply(lambda x: x["type"])
+
     transformer_counts = (
         transformers_df.groupby("SS_ID").size().reset_index(name="transformer_count")
     )
@@ -250,8 +256,11 @@ def load_and_process_data(DATA_LOC):
     ss_role = transformers_df[["SS_ID", "Role"]].drop_duplicates()
     ss_role_dict = dict(zip(ss_role["SS_ID"], ss_role["Role"]))
 
+    admittance_dir = DATA_LOC / "admittance_matrix"
+    os.makedirs(admittance_dir, exist_ok=True)
+
     # Save transformer counts
-    with open(DATA_LOC / "admittance_matrix" /"transformer_counts.pkl", "wb") as f:
+    with open(admittance_dir / "transformer_counts.pkl", "wb") as f:
         pickle.dump(transformer_counts_dict, f)
 
     logger.info("Data loaded and processed.")
@@ -480,14 +489,14 @@ def flatten_substation_dict(data, df_lines_EHV, buses):
                 & (df_lines_EHV["to_bus_id"] == ext_bus)
                 | (df_lines_EHV["from_bus_id"] == ext_bus)
                 & (df_lines_EHV["to_bus_id"] == hv_bus)
-            ][["line_id", "from_bus_id", "to_bus_id"]].values.tolist()
+            ][["LINE_ID", "from_bus_id", "to_bus_id"]].values.tolist()
             for line in line_connections:
-                line_id = line[0]
+                LINE_ID = line[0]
                 sub1 = line[1]
                 sub2 = line[2]
 
                 if sub1 in buses and sub2 in buses:
-                    records.append((hv_bus, ext_bus, "line", line_id))
+                    records.append((hv_bus, ext_bus, "line", LINE_ID))
 
         # Connections from LV buses to external buses
         for ext_bus_2_lv_bus in details["external_bus_to_lv_bus"]:
@@ -496,15 +505,15 @@ def flatten_substation_dict(data, df_lines_EHV, buses):
                 & (df_lines_EHV["to_bus_id"] == ext_bus_2_lv_bus)
                 | (df_lines_EHV["from_bus_id"] == ext_bus_2_lv_bus)
                 & (df_lines_EHV["to_bus_id"] == lv_bus)
-            ][["line_id", "from_bus_id", "to_bus_id"]].values.tolist()
+            ][["LINE_ID", "from_bus_id", "to_bus_id"]].values.tolist()
 
             for line in line_connections:
-                line_id = line[0]
+                LINE_ID = line[0]
                 sub1 = line[1]
                 sub2 = line[2]
 
                 if sub1 in buses and sub2 in buses:
-                    records.append((lv_bus, ext_bus_2_lv_bus, "line", line_id))
+                    records.append((lv_bus, ext_bus_2_lv_bus, "line", LINE_ID))
     return records
 
 
@@ -536,17 +545,17 @@ def calculate_line_resistances(df, df_ehv, line_resistance,
 
     # Merge with the lines to get the line length and Votage rating
     df = df.merge(
-        df_ehv[["line_id", "length", "VOLTAGE"]],
+        df_ehv[["LINE_ID", "length", "VOLTAGE"]],
         left_on="name",
-        right_on="line_id",
+        right_on="LINE_ID",
         how="left",
     )
 
     # Merge df_lines_unique with transmission lines to get geometries for plotting
     df = df.merge(
-        trans_lines_within_FERC_filtered_[["line_id", "geometry"]],
+        trans_lines_within_FERC_filtered_[["LINE_ID", "geometry"]],
         left_on="name",
-        right_on="line_id",
+        right_on="LINE_ID",
         how="left",
     )
 

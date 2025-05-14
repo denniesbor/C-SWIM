@@ -5,11 +5,7 @@
 # Some of the code is adapted from Greg Lucas's 2018 Hazard Paper.
 # Author: Dennies Bor
 # --------------------------------------------------------------------------
-"""
-
-
-
-"""
+""" """
 import os
 import time
 import sys
@@ -224,6 +220,7 @@ def read_transmission_lines(translines_shp, trans_lines_pickle, site_xys):
 # Prepare the paths and load the datasets
 # --------------------------------------------------------------------------
 
+
 def load_data(start_date=None, end_date=None):
     """
     Load geomagnetic data, MT sites, and transmission line data.
@@ -247,7 +244,8 @@ def load_data(start_date=None, end_date=None):
     # Set up paths
     emtf_path = DATA_LOC / "EMTF"
     mt_sites_pickle = emtf_path / "mt_pickle.pkl"
-    mag_data_path = DATA_LOC / "processed_geomag_data.nc"
+    geomag_path = DATA_LOC / "geomag_data"
+    mag_data_path = geomag_path / "processed_geomag_data.nc"
     translines_path = DATA_LOC / "Electric__Power_Transmission_Lines"
     trans_lines_pickle = translines_path / "trans_lines_pickle.pkl"
     translines_shp = translines_path / "Electric__Power_Transmission_Lines.shp"
