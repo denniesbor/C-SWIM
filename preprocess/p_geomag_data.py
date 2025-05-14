@@ -40,7 +40,7 @@ def process_magnetic_files(file_path, is_processed=False):
         data, headers = bezpy.mag.read_iaga(file_path, return_header=True)
         data.index.name = "Timestamp"
         for component in ["X", "Y", "Z"]:
-            data[component] = data[component].interpolate(method="nearest").fillna(method="bfill").fillna(method="ffill")
+            data[component] = data[component].interpolate(method="nearest").bfill().ffill()
             data[component] = signal.detrend(data[component])
         Latitude, Longitude = float(headers["geodetic latitude"]), float(headers["geodetic longitude"]) - 360
         iaga_code = headers["iaga code"]
@@ -102,13 +102,18 @@ def combine_results(results, obsv_xarrays):
 
 def get_mode(series):
     """
-    Get the mode of a series.
-    
+    Get the mode of a series, handling edge cases.
     """
-    mode_result = stats.mode(series)
-
-    return mode_result.mode if mode_result.mode.size > 0 else np.nan
-
+    series_clean = series.dropna()
+    if len(series_clean) == 0:
+        return np.nan
+    
+    # For numeric data, just return the most common value
+    value_counts = series_clean.value_counts()
+    if len(value_counts) > 0:
+        return value_counts.index[0]
+    else:
+        return np.nan
 
 def prepare_dataset(combined_df):
     """
