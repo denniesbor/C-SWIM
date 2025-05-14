@@ -18,7 +18,8 @@ data_loc = DATA_LOC
 kp_dst_path = data_loc / "kp_ap_indices"
 kp_dst_path.mkdir(parents=True, exist_ok=True)
 
-logger.info("Working directory:", data_loc)
+logger.info(f"Working directory: {data_loc}")
+
 
 def download_file(url, file_path):
     """Download a file from a given URL and save it to the specified path."""
@@ -33,8 +34,8 @@ def parse_combined_kp_ap_file(file_path):
     """
     Parses a combined Kp and Ap index data file into a pandas DataFrame.
 
-    The input file is expected to be space-separated and contain columns corresponding 
-    to year, month, day, hour, fractional hour, two decimal date values, Kp and Ap indices, 
+    The input file is expected to be space-separated and contain columns corresponding
+    to year, month, day, hour, fractional hour, two decimal date values, Kp and Ap indices,
     and a flag. The function reads this file and processes the data by adding:
     - A derived "Kp_0to9" column, where the Kp index is scaled to an integer range of 0 to 9.
     - A "Datetime" column created from the year, month, day, and hour columns.
@@ -69,7 +70,7 @@ def parse_combined_kp_ap_file(file_path):
 
 
 def analyze_kp_ap_data(df):
-    logger.info("Data range:", df["Datetime"].min(), "to", df["Datetime"].max())
+    logger.info(f"Data range: {df['Datetime'].min()} to {df['Datetime'].max()}")
     logger.info("\nBasic statistics:")
     logger.info(df[["Kp", "Kp_0to9", "Ap"]].describe())
     logger.info("\nDates with highest Ap index:")
@@ -258,8 +259,8 @@ def main():
     kp_df.set_index("Datetime", inplace=True)
 
     logger.info("\nData processing complete.")
-    logger.info("KP data shape:", kp_df.shape)
-    logger.info("DST data shape:", dst_df.shape)
+    logger.info(f"KP data shape: {kp_df.shape}")
+    logger.info(f"DST data shape: {dst_df.shape}")
 
     # You can add further analysis or plotting here
     storm_df = identify_storms(dst_df, kp_df)
@@ -297,58 +298,61 @@ def main():
 
     import datetime
 
-    dst_df['Kp'] = kp_df['1957':'2025']['Kp'].resample('1H').ffill()
-    storm_time_df = dst_df['1985':'2025'].copy()
-    storm_time_df['storm'] = False
+    dst_df["Kp"] = kp_df["1957":"2025"]["Kp"].resample("1H").ffill()
+    storm_time_df = dst_df["1985":"2025"].copy()
+    storm_time_df["storm"] = False
 
     delta_t = datetime.timedelta(days=1.5)
 
     list_of_times = []
 
-    #for i in range(100):
+    # for i in range(100):
     curr_dst = -1000
     while curr_dst < -140:
-        dsts = storm_time_df[~storm_time_df['storm']]['DST']
+        dsts = storm_time_df[~storm_time_df["storm"]]["DST"]
         dst_min = dsts.idxmin()
-        storm_time_df.loc[dst_min-delta_t:dst_min+delta_t,'storm'] = True
-        curr_dst = storm_time_df.loc[dst_min,'DST']
-        #logger.info(dst_min, curr_dst)
+        storm_time_df.loc[dst_min - delta_t : dst_min + delta_t, "storm"] = True
+        curr_dst = storm_time_df.loc[dst_min, "DST"]
+        # logger.info(f"{dst_min}, {curr_dst}")
         list_of_times.append(dst_min)
-        
+
     curr_kp = 10
     while curr_kp >= 8:
-        kp = storm_time_df[~storm_time_df['storm']]['Kp']
+        kp = storm_time_df[~storm_time_df["storm"]]["Kp"]
         kp_max = kp.idxmax()
-        storm_time_df.loc[kp_max-delta_t:kp_max+delta_t,'storm'] = True
-        curr_kp = storm_time_df.loc[kp_max,'Kp']
-        #logger.info(dst_min, curr_dst)
+        storm_time_df.loc[kp_max - delta_t : kp_max + delta_t, "storm"] = True
+        curr_kp = storm_time_df.loc[kp_max, "Kp"]
+        # logger.info(f"{dst_min}, {curr_dst}")
         list_of_times.append(kp_max)
-        
-    logger.info("Initial number of storms", len(list_of_times))
-    temp = storm_time_df['storm']
+
+    logger.info(f"Initial number of storms: {len(list_of_times)}")
+    temp = storm_time_df["storm"]
     # first row is a True preceded by a False
-    fst = temp.index[temp & ~ temp.shift(1).fillna(False)]
+    fst = temp.index[temp & ~temp.shift(1).fillna(False)]
 
     # last row is a True followed by a False
-    lst = temp.index[temp & ~ temp.shift(-1).fillna(False)]
+    lst = temp.index[temp & ~temp.shift(-1).fillna(False)]
 
     storm_times = []
     for i in range(len(fst)):
-        delta_t = lst[i]-fst[i]
+        delta_t = lst[i] - fst[i]
         # Storm width in hours
-        storm_hours = delta_t.days*24 + delta_t.seconds/3600
-        if storm_hours < 3: continue
-            
+        storm_hours = delta_t.days * 24 + delta_t.seconds / 3600
+        if storm_hours < 3:
+            continue
+
         storm_times.append((fst[i], lst[i]))
-        
-    logger.info("Number of storms after combining overlapping times:", len(storm_times))
+
+    logger.info(
+        f"Number of storms after combining overlapping times: {len(storm_times)}"
+    )
 
     nDst = 0
     nKp = 0
     nBoth = 0
     for x in storm_times:
-        maxKp = storm_time_df.loc[x[0]:x[1]]['Kp'].max()
-        minDst = storm_time_df.loc[x[0]:x[1]]['DST'].min()
+        maxKp = storm_time_df.loc[x[0] : x[1]]["Kp"].max()
+        minDst = storm_time_df.loc[x[0] : x[1]]["DST"].min()
         if maxKp >= 8 and minDst <= -140:
             nBoth += 1
         elif maxKp >= 8:
@@ -356,16 +360,16 @@ def main():
         elif minDst <= -140:
             nDst += 1
         else:
-            logger.error("Error, shouldn't get here!", maxKp, minDst)
-            
-    logger.info("Number of events with both selections satisfied:", nBoth)
-    logger.info("Number of events with only Kp satisfied:", nKp)
-    logger.info("Number of events with only Dst satisfied:", nDst)
+            logger.error(f"Error, shouldn't get here! maxKp: {maxKp}, minDst: {minDst}")
+
+    logger.info(f"Number of events with both selections satisfied: {nBoth}")
+    logger.info(f"Number of events with only Kp satisfied: {nKp}")
+    logger.info(f"Number of events with only Dst satisfied: {nDst}")
 
     storm_df = pd.DataFrame(storm_times, columns=["Start", "End"])
     storm_df.to_csv((kp_dst_path / "storm_periods.csv"), index=False)
 
 
 if __name__ == "__main__":
-    
+
     main()
