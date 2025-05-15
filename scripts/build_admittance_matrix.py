@@ -1,3 +1,4 @@
+# %%
 """
 Script to build a US EHV admittance matrix. 
 
@@ -22,13 +23,16 @@ import pandas as pd
 from scipy.sparse import eye
 from scipy.sparse.linalg import spsolve
 
+# sys.path.append("..")
 
+# %%
 from configs import setup_logger, get_data_dir
 
 # Get data data log and configure logger
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/build_adm_matrix.log")
 
+# %%
 def process_substation_buses(DATA_LOC, evan_data=False):
 
     (
@@ -217,25 +221,27 @@ def load_and_process_data(DATA_LOC):
     with open(DATA_LOC / "grid_processed" / "df_lines_EHV.pkl", "rb") as f:
         df_lines_EHV = pickle.load(f)
 
-    filename = "trans_lines_pickle.pkl"
-    folder = DATA_LOC / "Electric__Power_Transmission_Lines"
-    with open(folder / filename, "rb") as f:
+    folder = DATA_LOC / "grid_processed"
+
+    with open(folder / "trans_lines_pickle.pkl", "rb") as f:
         trans_lines_gdf = pickle.load(f)
         trans_lines_gdf.rename(
             columns={"line_id": "LINE_ID"}, inplace=True)
 
-    with open(DATA_LOC / "grid_processed" / "substation_to_line_voltages.pkl", "rb") as f:
+    with open(folder / "substation_to_line_voltages.pkl", "rb") as f:
         substation_to_line_voltages = pickle.load(f)
 
-    with open(DATA_LOC / "grid_processed" / "ss_df.pkl", "rb") as f:
+    with open(folder / "ss_df.pkl", "rb") as f:
         ss_df = pickle.load(f)
 
-    with open(DATA_LOC / "grid_processed" / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
+    with open(folder / "trans_lines_within_FERC_filtered.pkl", "rb") as f:
         trans_lines_within_FERC_filtered = pickle.load(f)
 
     # Process data
     df_lines_EHV = df_lines_EHV[df_lines_EHV["LINE_ID"].isin(trans_lines_gdf.LINE_ID)]
     ss_type_dict = dict(zip(ss_df["SS_ID"], ss_df["SS_TYPE"]))
+    
+    print("DF lines EHV shape:", df_lines_EHV.shape)
 
     # Process grid mapping data
     grid_mapping = pd.read_csv(DATA_LOC / "grid_mapping.csv")
@@ -321,7 +327,7 @@ def build_substation_buses(
 
             # We will focus now on distribution and transmission substations
             if ss_type not in ["distribution", "transmission"]:
-                continue
+                pass # Do nothing for now
             # print('here')
             # Voltages in substation
             sub_connected_lines = np.array(
@@ -582,7 +588,7 @@ def calculate_line_resistances(df, df_ehv, line_resistance,
 
 def get_transformer_samples(
     substation_buses,
-    sample_net_name="sample_network.pkl",
+    sample_net_name="admittance_matrix/sample_network.pkl",
     n_samples=2000,
     seed=42,
     ):
@@ -694,8 +700,11 @@ def random_admittance_matrix(substation_buses, df_transformers, bus_ids_map,
     # Apply bus_id map
     df_transformers["bus1"] = df_transformers["bus1_id"].map(bus_ids_map)
     df_transformers["bus2"] = df_transformers["bus2_id"].map(bus_ids_map)
+    
+    # Convert name to string to match sub_id type
+    substations_df['name'] = substations_df['name'].astype(str)
 
-    # Merge transformers with lat and lon data
+    # Then merge
     df_transformers = df_transformers.merge(
         substations_df[["name", "latitude", "longitude"]],
         left_on="sub_id",
@@ -958,7 +967,7 @@ def earthing_impedance(sub_look_up, substations_df):
 
     return Y_e
 
-
+# %%
 if __name__ == "__main__":
 
     admittances = []
@@ -973,7 +982,7 @@ if __name__ == "__main__":
 
     for i, df_transformer in enumerate(df_transformers):
         logger.info(f"Building admittance matrix {i + 1}...")
-        Y, Y_e = random_admittance_matrix(
+        Y, Y_e, df_transformers= random_admittance_matrix(
             substation_buses, df_transformer, bus_ids_map, sub_look_up, df_lines, substations_df,
         )
         admittances.append(Y)

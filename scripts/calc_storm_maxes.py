@@ -5,7 +5,8 @@
 # Some of the code is adapted from Greg Lucas's 2018 Hazard Paper.
 # Author: Dennies Bor
 # --------------------------------------------------------------------------
-""" """
+
+# %%
 import os
 import time
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 import multiprocessing
 import powerlaw
 import xarray as xr
-import pandas as gpd
+import geopandas as gpd
 import bezpy
 from pysecs import SECS
 from scipy import signal
@@ -30,6 +31,7 @@ import matplotlib.pyplot as plt
 from pysecs import SECS
 from shapely.geometry import LineString
 
+# %%
 
 from configs import setup_logger, get_data_dir
 
@@ -37,6 +39,7 @@ from configs import setup_logger, get_data_dir
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/storm_maxes.log")
 
+# %%
 
 # Routines and modules that are used to extract max Es, Bs, and Vs during a storm
 # -----------------------------------------------------------------------
@@ -137,7 +140,7 @@ def load_mt_sites(mt_sites_pickle, emtf_path):
 # --------------------------------------------------------------------------
 # Load and Prepare transmission lines data
 # ----------------------------------------------------------------
-def read_transmission_lines(translines_shp, trans_lines_pickle, site_xys):
+def read_transmission_lines(df_lines_EHV, trans_lines_pickle, site_xys):
     """
     Read transmission lines shapefile and pickle the data.
 
@@ -166,29 +169,14 @@ def read_transmission_lines(translines_shp, trans_lines_pickle, site_xys):
         # Use Delaunay triangulation to set weights
         t1 = time.time()
         # US Transmission lines
-        trans_lines_gdf = gpd.read_file(translines_shp)
+        with open(df_lines_EHV, "rb") as f:
+            trans_lines_gdf = pickle.load(f)
 
         # Rename the ID column
-        trans_lines_gdf.rename({"ID": "line_id"}, inplace=True, axis=1)
+        trans_lines_gdf.rename({"LINE_ID": "line_id"}, inplace=True, axis=1)
 
         # Apply crs
         trans_lines_gdf = trans_lines_gdf.to_crs(epsg=4326)
-
-        # Translate MultiLineString to LineString geometries, taking only the first LineString
-        trans_lines_gdf.loc[
-            trans_lines_gdf["geometry"].apply(lambda x: x.geom_type)
-            == "MultiLineString",
-            "geometry",
-        ] = trans_lines_gdf.loc[
-            trans_lines_gdf["geometry"].apply(lambda x: x.geom_type)
-            == "MultiLineString",
-            "geometry",
-        ].apply(
-            lambda x: list(x.geoms)[0]
-        )
-
-        # Let's focus on high voltage transmissions - > 200 kV
-        trans_lines_gdf = trans_lines_gdf[(trans_lines_gdf["VOLTAGE"] >= 200)]
 
         # Use bezpy to get the tranmsission line lenght
         trans_lines_gdf["obj"] = trans_lines_gdf.apply(
@@ -246,9 +234,9 @@ def load_data(start_date=None, end_date=None):
     mt_sites_pickle = emtf_path / "mt_pickle.pkl"
     geomag_path = DATA_LOC / "geomag_data"
     mag_data_path = geomag_path / "processed_geomag_data.nc"
-    translines_path = DATA_LOC / "Electric__Power_Transmission_Lines"
+    translines_path = DATA_LOC / "grid_processed"
     trans_lines_pickle = translines_path / "trans_lines_pickle.pkl"
-    translines_shp = translines_path / "Electric__Power_Transmission_Lines.shp"
+    df_lines_EHV = translines_path / "df_lines_EHV.pkl"
 
     # Load storm periods
     storm_data_loc = DATA_LOC / "kp_ap_indices" / "storm_periods.csv"
@@ -256,6 +244,7 @@ def load_data(start_date=None, end_date=None):
     storm_df["Start"] = pd.to_datetime(storm_df["Start"])
     storm_df["End"] = pd.to_datetime(storm_df["End"])
 
+    start_date=None; end_date=None;
     # Filter storm data if dates provided
     if start_date and end_date:
         storm_df = storm_df[
@@ -270,7 +259,7 @@ def load_data(start_date=None, end_date=None):
     site_xys = [(site.latitude, site.longitude) for site in MT_sites]
 
     # Load transmission lines
-    df = read_transmission_lines(translines_shp, trans_lines_pickle, site_xys)
+    df = read_transmission_lines(df_lines_EHV, trans_lines_pickle, site_xys)
 
     # Prepare SECS observation dictionary
     obs_dict = {
@@ -547,30 +536,31 @@ def process_storm(args):
 
 # %%
 def main():
-
     # File paths
-    maxB_file = DATA_LOC / "maxB_arr_testing_2.npy"
-    maxE_file = DATA_LOC / "maxE_arr_testing_2.npy"
-    maxV_file = DATA_LOC / "maxV_arr_testing_2.npy"
-    gannon_delaunay = DATA_LOC / "delaunay_v_gannon.npy"
-
+    file_path = DATA_LOC / "storm_maxes"
+    os.makedirs(file_path, exist_ok=True)
+    
+    # File names
+    maxB_file = file_path / "maxB_arr_testing_2.npy"
+    maxE_file = file_path / "maxE_arr_testing_2.npy"
+    maxV_file = file_path / "maxV_arr_testing_2.npy"
+    gannon_delaunay = file_path / "delaunay_v_gannon.npy"
+    
     site_xys = np.array([(site.latitude, site.longitude) for site in MT_sites])
     mt_site_names = [site.name for site in MT_sites]
-
+    
     # Log done loading data, and print unique obs in obs_dict
     logger.info(f"Done loading data, Obs in obs_dict: {obs_dict.keys()}")
-
+    
     CALCULATE_VALUES = True
     if CALCULATE_VALUES:
         t0 = time.time()
         logger.info(f"Starting to calculate storm maxes...")
-
-    if CALCULATE_VALUES:
+        
         n_storms = len(storm_df)
         n_sites = len(site_xys)
         calcV = True
-        gannon_storm = True
-
+        
         # Check if saved results exist, else initialize arrays
         if os.path.exists(maxB_file) and os.path.exists(maxE_file):
             maxB_arr = np.load(maxB_file)
@@ -579,83 +569,91 @@ def main():
         else:
             maxB_arr = np.zeros((n_sites, n_storms))
             maxE_arr = np.zeros((n_sites, n_storms))
-
+            
         if calcV and os.path.exists(maxV_file):
             maxV_arr = np.load(maxV_file)
         else:
             maxV_arr = np.zeros((n_trans_lines, n_storms))
-
-        # Prepare the args list for only unprocessed storms OR if i == 91 (force processing)
+            
+        # Prepare the args list for only unprocessed storms
         args = []
         for i, row in storm_df.iterrows():
-            if np.all(maxB_arr[:, i] == 0) or i == 91:  # Always process i == 91
-                args.append((i, row, calcV, gannon_storm))
-
+            if np.all(maxB_arr[:, i] == 0):  # Only process unprocessed storms
+                # For storm 91 (Gannon), we calculate full time series data
+                is_gannon = (i == 91)
+                args.append((i, row, calcV, is_gannon))
+                
         logger.info(f"Processing {len(args)} remaining storms")
-
+        
         # Use multiprocessing with a pool of workers
         with multiprocessing.Pool(12) as pool:
             for result in pool.imap_unordered(process_storm, args):
                 i, maxB, maxE, maxV, B_pred, E_pred = result
-
-                # Update the arrays with results
+                
+                if result[1] is None:  # Skip if error occurred
+                    continue
+                    
+                # Update the arrays with max values for ALL storms
                 maxB_arr[:, i] = maxB
                 maxE_arr[:, i] = maxE
+                
                 if calcV:
-                    if gannon_storm:
-                        np.save(gannon_delaunay, maxV)
+                    if i == 91:  # Special handling for Gannon storm
+                        # Save the full voltage time series for Gannon storm
+                        np.save(gannon_delaunay, maxV)  # This is the full time series
+                        # Also save the max values to the regular array
+                        maxV_arr[:, i] = np.nanmax(np.abs(maxV), axis=0)
                     else:
+                        # For regular storms, maxV is already the max values
                         maxV_arr[:, i] = maxV
-                        np.save(maxV_file, maxV_arr)
-
+                    
+                    # Always update the main voltage file
+                    np.save(maxV_file, maxV_arr)
+                
                 # Save intermediate results after each storm
                 np.save(maxB_file, maxB_arr)
                 np.save(maxE_file, maxE_arr)
-
+                
+                # For storm 91 (Gannon), save additional time series data
+                if i == 91:
+                    logger.info("Processing Gannon storm data...")
+                    
+                    gannon_start = storm_df.loc[91, "Start"]
+                    gannon_end = storm_df.loc[91, "End"]
+                    
+                    # Generate time stamps with 60s intervals
+                    time_stamps = pd.date_range(start=gannon_start, end=gannon_end, freq="60S")
+                    
+                    # Ensure B_pred aligns with time dimension
+                    if B_pred.shape[0] != len(time_stamps):
+                        logger.warning(f"Mismatch in time length: B_pred {B_pred.shape[0]} vs time {len(time_stamps)}")
+                        time_stamps = time_stamps[:B_pred.shape[0]]  # Trim if necessary
+                        
+                    B_pred = B_pred[:, :, :2]  # Only use Bx and By components
+                    
+                    ds_gannon = xr.Dataset(
+                        {
+                            "B_pred": (["time", "site", "component"], B_pred),
+                            "E_pred": (["time", "site", "component"], E_pred),
+                        },
+                        coords={
+                            "time": time_stamps,
+                            "name": mt_site_names,
+                            "site_x": site_xys[:, 0],
+                            "site_y": site_xys[:, 1],
+                            "component": ["Bx", "By"],
+                        },
+                    )
+                    ds_gannon.to_netcdf(file_path / "ds_gannon.nc")
+                    logger.info(f"Gannon storm dataset saved to ds_gannon.nc")
+                    
                 logger.info(f"Processed and saved storm: {i + 1}")
-
+                
         logger.info(f"Done calculating storm maxes: {time.time() - t0}")
-        logger.info(f"Saved results to {DATA_LOC}")
-
-        # If Gannon storm, save additional data
-        if gannon_storm and i == 91:
-            logger.info("Processing Gannon storm data...")
-            gannon_start = storm_df.loc[91, "Start"]
-            gannon_end = storm_df.loc[91, "End"]
-
-            # Generate time stamps with 60s intervals
-            time_stamps = pd.date_range(start=gannon_start, end=gannon_end, freq="60S")
-            print("B_pred shape and time stamps leng", B_pred.shape, len(time_stamps))
-
-            # Ensure B_pred aligns with time dimension
-            if B_pred.shape[0] != len(time_stamps):
-                logger.warning(
-                    f"Mismatch in time length: B_pred {B_pred.shape[0]} vs time {len(time_stamps)}"
-                )
-                time_stamps = time_stamps[: B_pred.shape[0]]  # Trim if necessary
-
-            B_pred = B_pred[:, :, :2]  # Only use Bx and By
-
-            ds_gannon = xr.Dataset(
-                {
-                    "B_pred": (["time", "site", "component"], B_pred),
-                    "E_pred": (["time", "site", "component"], E_pred),
-                },
-                coords={
-                    "time": time_stamps,
-                    "name": mt_site_names,
-                    "site_x": site_xys[:, 0],
-                    "site_y": site_xys[:, 1],
-                    "component": ["Bx", "By"],
-                },
-            )
-            ds_gannon.to_netcdf(DATA_LOC / "ds_gannon.nc")
-            logger.info(f"Gannon storm dataset saved to ds_gannon.nc")
+        logger.info(f"Saved results to {file_path}")
 
 
 if __name__ == "__main__":
-
     magnetic_data, MT_sites, df, storm_df, obs_dict, site_xys = load_data()
     n_trans_lines = df.shape[0]
-
     main()

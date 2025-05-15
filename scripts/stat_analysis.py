@@ -274,7 +274,8 @@ if __name__ == "__main__":
     storm_data_loc = DATA_LOC / "kp_ap_indices" / "storm_periods.csv"
     emtf_data_path = DATA_LOC / "EMTF" / "mt_pickle.pkl"
     filename = "trans_lines_pickle.pkl"
-    transmission_line_path = DATA_LOC / "Electric__Power_Transmission_Lines" / filename
+    transmission_line_path = DATA_LOC / "grid_processed" / filename
+    storm_maxes_path = DATA_LOC / "storm_maxes"
 
     if os.path.exists(emtf_data_path):
         with open(emtf_data_path, "rb") as pkl:
@@ -288,20 +289,21 @@ if __name__ == "__main__":
     if os.path.exists(transmission_line_path):
         with open(transmission_line_path, "rb") as pkl:
             trans_lines_gdf = pickle.load(pkl)
-        line_ids = np.int32(trans_lines_gdf.line_id.to_numpy())
+        line_ids = trans_lines_gdf.line_id.astype(str).to_numpy()
     else:
         raise FileNotFoundError(f"Can't find file: {transmission_line_path}")
 
     storm_df = pd.read_csv(storm_data_loc)
     storm_df["Start"] = pd.to_datetime(storm_df["Start"])
     storm_df["End"] = pd.to_datetime(storm_df["End"])
-    # # filter from 1985 to 2015
-    storm_df = storm_df[(storm_df["Start"] >= "1985-01-01") & (storm_df["End"] <= "2016-01-01")]
+    
+    # # filter from 1985 to 2025
+    storm_df = storm_df[(storm_df["Start"] >= "1985-01-01") & (storm_df["End"] <= "2025-01-01")]
 
     # Load the maxes as numpy arrays
-    maxB_arr = np.load(DATA_LOC / "maxB_arr_testing_2.npy")
-    maxE_arr = np.load(DATA_LOC / "maxE_arr_testing_2.npy")
-    maxV_arr = np.load(DATA_LOC / "maxV_arr_testing_2.npy")
+    maxB_arr = np.load(storm_maxes_path / "maxB_arr_testing_2.npy")
+    maxE_arr = np.load(storm_maxes_path / "maxE_arr_testing_2.npy")
+    maxV_arr = np.load(storm_maxes_path / "maxV_arr_testing_2.npy")
 
     # Define key storm events
     n_years = 39  # Number of years from 1985 to 2024
@@ -310,8 +312,8 @@ if __name__ == "__main__":
     halloween_start = datetime(2003, 10, 29, 0)
     halloween_end = datetime(2003, 11, 3, 0)
 
-    gannon_start = datetime(2024, 5, 11, 0)  # Mother's Day storm in 2024
-    gannon_end = gannon_start + timedelta(days=1)  # 1 day duration
+    gannon_start = datetime(2024, 5, 9, 0)  # Mother's Day storm in 2024
+    gannon_end = gannon_start + timedelta(days=2)  # 1 day duration
 
     st_patricks_start = datetime(2015, 3, 17, 0)  # St. Patrick's Day storm 2015
     st_patricks_end = st_patricks_start + timedelta(days=1)  # 1 day duration
@@ -321,6 +323,9 @@ if __name__ == "__main__":
 
     halloween_idx = get_event_indices(storm_df, halloween_start, halloween_end)
     gannon_idx = get_event_indices(storm_df, gannon_start, gannon_end)
+    print("Gannon storm indices:", gannon_idx)
+    print("Halloween storm indices:", halloween_idx)
+    print("St. Patrick's storm indices:", st_patricks_start, st_patricks_end)
     st_patricks_idx = get_event_indices(storm_df, st_patricks_start, st_patricks_end)
 
     maxB_halloween, maxE_halloween, maxV_halloween = extract_max_values(maxB_arr, maxE_arr, maxV_arr, halloween_idx)

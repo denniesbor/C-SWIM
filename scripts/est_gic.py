@@ -91,6 +91,7 @@ def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
 
         # Read transmission line IDs
         line_ids = f["sites/transmission_lines/line_ids"][:]
+        line_ids_str = [id.decode('utf-8') if isinstance(id, bytes) else str(id) for id in line_ids]
 
         # Read Halloween storm data
         halloween_e = f["events/halloween/E"][:] / 1000
@@ -121,9 +122,11 @@ def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
     ]
 
     # Mapping IDs to indices
-    id_to_index = {id: i for i, id in enumerate(line_ids)}
+    id_to_index = {id: i for i, id in enumerate(line_ids_str)}
     indices = np.array([id_to_index.get(name, -1) for name in df_lines["name"]])
     mask = indices != -1
+    
+    print("mask", mask)
 
     # Use boolean indexing to handle missing values
     df_lines.loc[mask, "V_halloween"] = halloween_v[indices[mask]]
@@ -632,9 +635,11 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
     and precision (float16/float32) based on hardware availability and 
     numerical requirements.
     """
+    logger.info("Calculating nodal voltages using PyTorch...")
     # Select device: cuda > mps > cpu
     if torch.cuda.is_available():
         device = torch.device("cuda")
+        torch.backends.cudnn.benchmark = True  # Optimize CUDA performance
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
@@ -645,73 +650,95 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
     else:
         gc.collect()
 
-    # Process Y_total: choose dtype then add regularization
-    y_dtype = torch.float16 if can_use_float16(Y_total) else torch.float32
-    Y_tensor = torch.tensor(Y_total, dtype=y_dtype, device=device)
-    reg = 1e-6
-    Y_reg = Y_tensor.to(torch.float32) + torch.eye(Y_tensor.shape[0], dtype=torch.float32, device=device) * reg
+    logger.info(f"Using device: {device}")
 
-    # Attempt Cholesky on the selected device
-    try:
-        L = torch.linalg.cholesky(Y_reg)
-    except Exception as e:
-        logger.error(f"Cholesky decomposition failed on torch: {e}. Falling back to numpy.")
+    # Use float32 for numerical stability
+    Y_tensor = torch.tensor(Y_total, dtype=torch.float32, device=device)
+
+    # Adaptive regularization strategy
+    success = False
+    reg_values = [1e-8, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2]
+
+    for reg in reg_values:
+        Y_reg = Y_tensor + torch.eye(Y_tensor.shape[0], dtype=torch.float32, device=device) * reg
+        
         try:
-            # Fallback: compute Cholesky with numpy on CPU and convert result
-            Y_reg_cpu = np.array(Y_total, dtype=np.float32) + np.eye(Y_tensor.shape[0], dtype=np.float32) * reg
-            L_np = np.linalg.cholesky(Y_reg_cpu)
-            L = torch.tensor(L_np, dtype=torch.float32, device=device)
-        except Exception as e_np:
-            logger.error(f"Cholesky decomposition failed on numpy fallback: {e_np}")
-            return {k: None for k in injections_data}
+            L = torch.linalg.cholesky(Y_reg)
+            print(f"Cholesky succeeded with regularization: {reg}")
+            success = True
+            break
+        except Exception as e:
+            print(f"Cholesky failed with reg={reg}: {e}")
+            continue
 
-    # Filter valid injections and stack them as a batch (assumes consistent shape)
+    if not success:
+        # Try more aggressive strategies
+        logger.info("Trying alternative decomposition methods...")
+        
+        # Method 1: Add regularization only to zero diagonal elements
+        diag_mask = torch.diag(Y_tensor) < 1e-10
+        Y_reg = Y_tensor.clone()
+        Y_reg[diag_mask, diag_mask] += 1e-3
+        
+        try:
+            L = torch.linalg.cholesky(Y_reg)
+            logger.info("Cholesky succeeded with selective regularization")
+            success = True
+        except:
+            logger.error("Cholesky failed with selective regularization")
+            pass
+        
+        if not success:
+            # Method 2: LU decomposition (more stable but slower)
+            logger.info("Cholesky failed, trying LU decomposition...")
+            try:
+                LU, pivots = torch.linalg.lu_factor(Y_tensor)
+                # Modified solve process for LU
+                valid_keys = [k for k, v in injections_data.items() if v is not None]
+                injection_batch = torch.stack(
+                    [torch.tensor(injections_data[k], dtype=torch.float32, device=device) 
+                        for k in valid_keys], dim=-1
+                )
+                V_n = torch.linalg.lu_solve(LU, pivots, injection_batch)
+                
+                results = {}
+                for idx, key in enumerate(valid_keys):
+                    results[key] = V_n[:, idx].cpu().numpy()
+                return results
+            except Exception as e:
+                logger.error(f"LU decomposition also failed: {e}")
+                return {k: None for k in injections_data}
+
+    # Continue with Cholesky solve
     valid_keys = [k for k, v in injections_data.items() if v is not None]
     if not valid_keys:
         return {k: None for k in injections_data}
 
-    inj_dtype = torch.float16 if can_use_float16(injections_data[valid_keys[0]]) else torch.float32
+    # Stack injections
+    injection_batch = torch.stack(
+        [torch.tensor(injections_data[k], dtype=torch.float32, device=device) 
+            for k in valid_keys], dim=-1
+    )
+
+    # Solve using Cholesky decomposition
     try:
-        injection_batch = torch.stack(
-            [torch.tensor(injections_data[k], dtype=inj_dtype, device=device) for k in valid_keys],
-            dim=-1,
-        )
+        # Use solve_triangular for better performance
+        P = torch.linalg.solve_triangular(L, injection_batch, upper=False)
+        V_n = torch.linalg.solve_triangular(L.t(), P, upper=True)
     except Exception as e:
-        logger.error(f"Error stacking injections: {e}")
-        return {k: None for k in injections_data}
+        print(f"Triangular solve failed: {e}")
+        # Fallback to standard solve
+        V_n = torch.linalg.solve(Y_reg, injection_batch)
 
-    injection_float32 = injection_batch.to(torch.float32)
-
-    try:
-        # Solve system using the Cholesky factor: Y_reg * V_n = injections
-        P = torch.linalg.solve(L, injection_float32)
-        V_n = torch.linalg.solve(L.t(), P)
-    except Exception as e:
-        logger.error(f"Batched solve error: {e}. Falling back to CPU solve.")
-        try:
-            # Fallback: move tensors to CPU and solve there
-            L_cpu = L.cpu()
-            injection_cpu = injection_float32.cpu()
-            P = torch.linalg.solve(L_cpu, injection_cpu)
-            V_n = torch.linalg.solve(L_cpu.t(), P)
-            # Convert the result back to the original device if needed
-            V_n = V_n.to(device)
-        except Exception as e_cpu:
-            logger.error(f"CPU fallback solve error: {e_cpu}")
-            return {k: None for k in injections_data}
-
-    if can_use_float16(V_n.cpu().numpy()):
-        V_n = V_n.to(torch.float16)
-
+    # Convert results
     results = {}
     for idx, key in enumerate(valid_keys):
         results[key] = V_n[:, idx].cpu().numpy()
-    for k in injections_data:
-        if k not in results:
-            results[k] = None
+        
+    logger.info("Nodal voltage calculation completed.")
 
-    logger.info("Vectorized nodal voltage computations (torch) completed.")
     return results
+
 
 
 def format_np_gic(substations_df, sub_look_up, non_zero_indices, ig, n_nodes, v_col):
@@ -893,6 +920,7 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
 
         # Read transmission line IDs
         line_ids = f["sites/transmission_lines/line_ids"][:]
+        line_ids_str = [id.decode('utf-8') if isinstance(id, bytes) else str(id) for id in line_ids]
 
         # Read Halloween storm data
         halloween_e = f["events/halloween/E"][:] / 1000
@@ -917,7 +945,7 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
     v_cols.extend(v_gannon_cols)
 
     # Mapping IDs to indices
-    id_to_index = {id: i for i, id in enumerate(line_ids)}
+    id_to_index = {id: i for i, id in enumerate(line_ids_str)}
     indices = np.array([id_to_index.get(name, -1) for name in df_lines["name"]])
     mask = indices != -1
 
@@ -983,7 +1011,7 @@ def solve_total_nodal_gic_optimized(Z, V_all):
     return spsolve(Y_reg, Z.T @ V_all.T) * 3
 
 
-def main(generate_grid_only=False, gannon_storm_only=False):
+def main(generate_grid_only=False, gannon_storm_only=False): 
     """
     Main function to calculate GICs in the power system.
     
@@ -1007,7 +1035,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
     When generate_grid_only=True, it only creates interpolated grids
     of E-field data for visualization purposes.
     """
-    results_path = "geomagnetic_data_return_periods.h5"
+    results_path = "statistical_analysis/geomagnetic_data_return_periods.h5"
 
     # Get substation buses data
     substation_buses, bus_ids_map, sub_look_up, df_lines, df_substations_info = (
@@ -1016,15 +1044,15 @@ def main(generate_grid_only=False, gannon_storm_only=False):
 
     # Load and process transmission line data
     df_lines.drop(columns=["geometry"], inplace=True)
-    df_lines["name"] = df_lines["name"].astype(np.int32)
+    df_lines["name"] = df_lines["name"].astype(str)
 
     transmission_line_path = (
-        DATA_LOC / "Electric__Power_Transmission_Lines" / "trans_lines_pickle.pkl"
+        DATA_LOC / "grid_processed" / "trans_lines_pickle.pkl"
     )
     with open(transmission_line_path, "rb") as p:
         trans_lines_gdf = pickle.load(p)
 
-    trans_lines_gdf["line_id"] = trans_lines_gdf["line_id"].astype(np.int32)
+    trans_lines_gdf["line_id"] = trans_lines_gdf["line_id"].astype(str)
     df_lines = df_lines.merge(
         trans_lines_gdf[["line_id", "geometry"]], right_on="line_id", left_on="name"
     )
@@ -1058,11 +1086,11 @@ def main(generate_grid_only=False, gannon_storm_only=False):
         logger.info("Starting GIC calculations...")
         for i, trafo_data in enumerate(trafos_data):
 
-            if i % 2 == 0:
-                continue
+            # if i % 2 == 0:
+            #     continue
 
             # Save the GIC DataFrame
-            filename = DATA_LOC / f"winding_gic_rand_{i}.csv"
+            filename = processed_gic_path / f"winding_gic_rand_{i}.csv"
 
             if os.path.exists(filename) and not gannon_storm_only:
                 continue
@@ -1136,7 +1164,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
                 )
 
                 filename_gic = (
-                    DATA_LOC / "ground_gic" / f"ground_gic_gannon_{i}.csv"
+                    processed_gic_path / "ground_gic" / f"ground_gic_gannon_{i}.csv"
                 )  # Adjust filename as needed
 
                 if os.path.exists(filename_gic):
@@ -1280,6 +1308,9 @@ if __name__ == "__main__":
     
     # Get data data log and configure logger
     DATA_LOC = get_data_dir()
+    processed_gic_path = DATA_LOC / "gic"
+    os.makedirs(processed_gic_path, exist_ok=True)
+    
     logger = setup_logger(log_file="logs/gic_calculation.log")
 
     # Define return periods
@@ -1287,4 +1318,4 @@ if __name__ == "__main__":
 
     gannon_storm_only = False
 
-    # main(generate_grid_only=False, gannon_storm_only=False)
+    main(generate_grid_only=False, gannon_storm_only=False)
