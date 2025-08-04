@@ -48,21 +48,6 @@ logger = setup_logger(log_file="logs/storm_maxes.log")
 def process_xml_file(full_path):
     """
     Read and parse EMTF XML files.
-
-    Parameters
-    ----------
-    full_path : str
-        The full path to the XML file.
-
-    Returns
-    -------
-    bezpy.mt.Site or None
-        The processed site object if successful, None otherwise.
-
-    Notes
-    -----
-    This function reads an EMTF XML file, checks its rating, and returns
-    the processed site object if the rating is 3 or higher.
     """
     try:
         site_name = os.path.basename(full_path).split(".")[1]
@@ -82,21 +67,6 @@ def process_xml_file(full_path):
 def process_sites(directory):
     """
     Process all XML files in the given directory and its subdirectories.
-
-    Parameters
-    ----------
-    directory : str
-        The root directory to search for XML files.
-
-    Returns
-    -------
-    list
-        A list of processed MT site objects.
-
-    Notes
-    -----
-    This function uses a ThreadPoolExecutor to process XML files concurrently.
-    It prints progress every 100 completed files.
     """
     MT_sites = []
     completed = 0
@@ -400,34 +370,6 @@ def find_storm_maximum(E_pred, window_hours=(20 / 60)):
 def calculate_maxes(start_time, end_time, calcV=False, if_gannon=True):
     """
     Calculate maximum magnetic fields, electric fields, and voltages for given time range and observation data.
-
-    Parameters
-    ----------
-    start_time : datetime
-        The start time of the calculation period.
-    end_time : datetime
-        The end time of the calculation period.
-    calcV : bool, optional
-        Whether to calculate voltages, by default True.
-    obs_dict : dict, optional
-        Dictionary of observation datasets, by default None.
-
-    Returns
-    -------
-    tuple
-        A tuple containing:
-        - site_maxB : ndarray
-            Maximum magnetic field magnitude for each site.
-        - site_maxE : ndarray
-            Maximum electric field magnitude for each site.
-        - line_maxV : ndarray
-            Maximum voltage magnitude for each transmission line (if calcV is True).
-
-    Notes
-    -----
-    This function processes observation data, calculates SECS (Spherical Elementary Current Systems),
-    and determines maximum values for magnetic fields, electric fields, and optionally, voltages at the MT sites.
-    It uses interpolation and filtering techniques on the input data.
     """
     t0 = time.time()
 
@@ -510,16 +452,6 @@ def calculate_maxes(start_time, end_time, calcV=False, if_gannon=True):
 def process_storm(args):
     """
     Process a single storm event.
-
-    Parameters
-    ----------
-    args : tuple
-        Contains (i, row, calcV, MT_sites, obs_dict)
-
-    Returns
-    -------
-    tuple
-        Contains (i, maxB, maxE, maxV)
     """
     i, row, calcV, gannon_storm = args
     try:

@@ -335,7 +335,7 @@ if __name__ == "__main__":
 
     # Run the analysis
     n_samples = 100
-    return_periods = np.arange(25, 1001, 25)
+    return_periods = np.arange(25, 251, 25)
     dir_path = DATA_LOC / "statistical_analysis"
     dir_path.mkdir(parents=True, exist_ok=True)
 

@@ -1,14 +1,17 @@
 # ...............................................................................
 # Description: Levereages the admittance matrix to calculate the GICs along the
 # transmission lines and transformers in the network.
-# Dependency: Output from build_admittance_matrix.py and data from data_preprocessing.ipynb
+# Dependency: Output from build_admittance_matrix.py
 # ...............................................................................
 
 # %%
 import os
 import gc
+from pathlib import Path
+from tqdm import tqdm
 import pickle
 from functools import reduce
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import h5py
 import numpy as np
 import pandas as pd
@@ -18,7 +21,7 @@ from scipy.interpolate import griddata
 import xarray as xr
 import torch
 from shapely.geometry import LineString
-from shapely.geometry import Point  # Point class
+from shapely.geometry import Point
 import geopandas as gpd
 from scipy.ndimage import gaussian_filter1d
 from scipy import signal
@@ -27,22 +30,22 @@ from scipy import signal
 from build_admittance_matrix import process_substation_buses, random_admittance_matrix, get_transformer_samples
 from configs import setup_logger, get_data_dir
 
+# Set up logger
+logger = setup_logger(log_file="logs/gic_calculation.log")
+
+# Get data data log and configure logger
+DATA_LOC = get_data_dir()
+processed_gic_path = DATA_LOC / "gic"
+processed_gnd_gic_path = DATA_LOC / "gnd_gic"
+os.makedirs(processed_gic_path, exist_ok=True)
+os.makedirs(processed_gnd_gic_path, exist_ok=True)
+
+# Define return periods for GIC calculations
+return_periods = np.arange(50, 251, 25)
 
 def find_substation_name(bus, sub_ref):
     """
     Find the substation name for a given bus from the substation reference dictionary.
-    
-    Parameters
-    ----------
-    bus : str
-        The bus ID to search for
-    sub_ref : dict
-        Dictionary mapping substation names to lists of bus IDs
-    
-    Returns
-    -------
-    str or None
-        The name of the substation containing the bus, or None if not found
     """
     for sub_name, buses in sub_ref.items():
         if bus in buses:
@@ -55,28 +58,6 @@ def find_substation_name(bus, sub_ref):
 def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
     """
     Load and process geomagnetically induced current (GIC) data from HDF5 files.
-
-    Parameters
-    ----------
-    DATA_LOC : Path
-        Path to the data directory
-    df_lines : DataFrame
-        DataFrame containing transmission line data
-    results_path : str
-        Path to the HDF5 file containing geomagnetic data
-
-    Returns
-    -------
-    tuple
-        Tuple containing:
-        - df_lines: Updated DataFrame with transmission line data
-        - mt_coords: Coordinates of MT sites
-        - mt_names: Names of MT sites
-        - e_fields: Dictionary of E-field data for different return periods
-        - b_fields: Dictionary of B-field data for different return periods
-        - v_fields: Dictionary of voltage data for different return periods
-        - gannon_e: E-field data for Gannon storm
-        - v_cols: List of voltage column names
     """
 
     logger.info("Loading and processing GIC data...")
@@ -158,28 +139,7 @@ def calculate_injection_currents_vectorized(
     df, n_nodes, col, non_zero_indices, sub_look_up
 ):
     """
-    Vectorized calculation of injection currents for a power system network.
-    
-    This function computes the nodal injection currents resulting from GIC for each node
-    in the network using vectorized operations for improved performance.
-    
-    Parameters
-    ----------
-    df : DataFrame
-        DataFrame containing transmission line data
-    n_nodes : int
-        Number of nodes in the network
-    col : str
-        Column name in df representing the voltage source
-    non_zero_indices : array
-        Indices of non-zero nodes to consider
-    sub_look_up : dict
-        Dictionary mapping bus names to node indices
-        
-    Returns
-    -------
-    ndarray
-        Array of injection currents for non-zero nodes
+    Calculation of injection currents for a power system network.
     """
     logger.info(f"Calculating injection currents for {col} (vectorized)...")
     injection_currents = np.zeros(n_nodes, dtype=np.float64)
@@ -203,24 +163,6 @@ def calculate_injection_currents_vectorized(
 def calculate_GIC(df, V_nodal, col, non_zero_indices, n_nodes):
     """
     Calculate the Ground Induced Current (GIC) for transmission lines.
-    
-    Parameters
-    ----------
-    df : DataFrame
-        DataFrame containing transmission line data
-    V_nodal : ndarray
-        Nodal voltages calculated from the network model
-    col : str
-        Column name representing the GIC source voltages
-    non_zero_indices : array
-        Indices of non-zero nodes in the network
-    n_nodes : int
-        Total number of nodes in the network
-        
-    Returns
-    -------
-    DataFrame
-        Input DataFrame with an additional column containing calculated GIC values
     """
     logger.info(f"Calculating GIC for {col}...")
 
@@ -246,92 +188,88 @@ def calculate_GIC(df, V_nodal, col, non_zero_indices, n_nodes):
 
     return df
 
-
 def calc_trafo_gic(
     sub_look_up, df_transformers, V_nodal, sub_ref, n_nodes, non_zero_indices, title=""
 ):
     """
-    Calculate GIC in transformer windings based on nodal voltages.
-    
-    This function computes GIC in different types of transformers (GSU, Auto, GY-GY-D, etc.)
-    based on their configuration and the nodal voltages from the network solution.
-    
-    Parameters
-    ----------
-    sub_look_up : dict
-        Dictionary mapping bus names to node indices
-    df_transformers : DataFrame
-        DataFrame containing transformer data
-    V_nodal : ndarray
-        Nodal voltages calculated from the network model
-    sub_ref : dict
-        Dictionary mapping substation names to bus lists
-    n_nodes : int
-        Total number of nodes in the network
-    non_zero_indices : array
-        Indices of non-zero nodes in the network
-    title : str, optional
-        Title for logging purposes
-        
-    Returns
-    -------
-    dict
-        Dictionary mapping transformer names to dictionaries of winding GIC values
+    Transformer winding gic calculations.
     """
-    logger.info(f"Calculating GIC for transformers {title}...")
     gic = {}
-
+    if len(df_transformers) == 0:
+        return gic
+    
     V_all = np.zeros(n_nodes)
     V_all[non_zero_indices] = V_nodal
-
-    # Process transformers and build admittance matrix
-    for bus, bus_idx in sub_look_up.items():
-        sub = find_substation_name(bus, sub_ref)
-
-        # Filter transformers for current bus
-        trafos = df_transformers[df_transformers["bus1"] == bus]
-
-        if len(trafos) == 0 or sub == "Substation 7":
-            continue
-
-        # Process each transformer
-        for _, trafo in trafos.iterrows():
-            # Extract parameters
-            bus1 = trafo["bus1"]
-            bus2 = trafo["bus2"]
-            neutral_point = trafo["sub"]  # Neutral point node (for auto-transformers)
-            W1 = trafo["W1"]  # Impedance for Winding 1 (Primary, Series)
-            W2 = trafo["W2"]  # Impedance for Winding 2 (Secondary, if available)
-
-            trafo_name = trafo["name"]
-            trafo_type = trafo["type"]
-            bus1_idx = sub_look_up[bus1]
-            neutral_idx = sub_look_up.get(neutral_point)
-            bus2_idx = sub_look_up[bus2]
-
-            if trafo_type == "GSU" or trafo_type == "GSU w/ GIC BD":
-                Y_w1 = 1 / W1  # Primary winding admittance
-                i_k = (V_all[bus1_idx] - V_all[neutral_idx]) * Y_w1
-                gic[trafo_name] = {"HV": i_k}
-
-            elif trafo_type == "Tee":
-                # Commented out code, consider removing if not needed
-                continue
-
-            elif trafo_type == "Auto":
-                Y_series = 1 / W1
-                Y_common = 1 / W2
-                I_s = (V_all[bus1_idx] - V_all[bus2_idx]) * Y_series
-                I_c = (V_all[bus2_idx] - V_all[neutral_idx]) * Y_common
-                gic[trafo_name] = {"Series": I_s, "Common": I_c}
-
-            elif trafo_type in ["GY-GY-D", "GY-GY"]:
-                Y_primary = 1 / W1
-                Y_secondary = 1 / W2
-                I_w1 = (V_all[bus1_idx] - V_all[neutral_idx]) * Y_primary
-                I_w2 = (V_all[bus2_idx] - V_all[neutral_idx]) * Y_secondary
-                gic[trafo_name] = {"HV": I_w1, "LV": I_w2}
-
+    
+    # Pre-filter for valid buses and exclude Substation 7
+    valid_buses = df_transformers["bus1"].isin(sub_look_up.keys())
+    if sub_ref is not None:
+        # Keep original approach - can't optimize without knowing sub_ref structure
+        valid_subs = df_transformers["bus1"].apply(
+            lambda b: find_substation_name(b, sub_ref) != "Substation 7"
+        )
+        valid = valid_buses & valid_subs
+    else:
+        valid = valid_buses
+    
+    if not valid.any():
+        return gic
+    
+    # Filter dataframe once
+    df_valid = df_transformers[valid].copy()
+    
+    # Pre-index with error handling
+    bus1_idx = df_valid["bus1"].map(sub_look_up).to_numpy()
+    bus2_idx = df_valid["bus2"].map(sub_look_up).to_numpy() 
+    neutral_idx = df_valid["sub"].map(sub_look_up).to_numpy()
+    
+    # Handle missing indices -- use pd.isna for safety
+    valid_indices = ~(pd.isna(bus1_idx) | pd.isna(bus2_idx) | pd.isna(neutral_idx))
+    if not valid_indices.any():
+        return gic
+    
+    bus1_idx = bus1_idx[valid_indices].astype(int)
+    bus2_idx = bus2_idx[valid_indices].astype(int) 
+    neutral_idx = neutral_idx[valid_indices].astype(int)
+    df_valid = df_valid[valid_indices]
+    
+    # Vectorized voltages and admittances
+    V_bus1, V_bus2, V_neu = V_all[bus1_idx], V_all[bus2_idx], V_all[neutral_idx]
+    
+    # Safe division with zero handling
+    W1_vals = df_valid["W1"].to_numpy()
+    W2_vals = df_valid["W2"].to_numpy()
+    Y_W1 = np.divide(1.0, W1_vals, out=np.zeros_like(W1_vals), where=W1_vals!=0)
+    Y_W2 = np.divide(1.0, W2_vals, out=np.zeros_like(W2_vals), where=W2_vals!=0)
+    
+    # Type masks
+    t_type = df_valid["type"].to_numpy()
+    t_names = df_valid["name"].to_numpy()
+    
+    mask_gsu = np.isin(t_type, ["GSU", "GSU w/ GIC BD", "GY-D"])
+    mask_auto = (t_type == "Auto")
+    mask_gy = np.isin(t_type, ["GY-GY-D", "GY-GY"])
+    
+    # Only compute what we need - slice first then compute
+    if mask_gsu.any():
+        gsu_indices = np.where(mask_gsu)[0]
+        hv_vals = (V_bus1[gsu_indices] - V_neu[gsu_indices]) * Y_W1[gsu_indices]
+        gic.update({t_names[i]: {"HV": hv_vals[idx]} for idx, i in enumerate(gsu_indices)})
+    
+    if mask_auto.any():
+        auto_indices = np.where(mask_auto)[0]
+        ser_vals = (V_bus1[auto_indices] - V_bus2[auto_indices]) * Y_W1[auto_indices]
+        com_vals = (V_bus2[auto_indices] - V_neu[auto_indices]) * Y_W2[auto_indices]
+        gic.update({t_names[i]: {"Series": ser_vals[idx], "Common": com_vals[idx]} 
+                   for idx, i in enumerate(auto_indices)})
+    
+    if mask_gy.any():
+        gy_indices = np.where(mask_gy)[0]
+        hv_vals = (V_bus1[gy_indices] - V_neu[gy_indices]) * Y_W1[gy_indices]
+        lv_vals = (V_bus2[gy_indices] - V_neu[gy_indices]) * Y_W2[gy_indices]
+        gic.update({t_names[i]: {"HV": hv_vals[idx], "LV": lv_vals[idx]} 
+                   for idx, i in enumerate(gy_indices)})
+    
     logger.info(f"GIC calculation for transformers {title} completed.")
     return gic
 
@@ -339,12 +277,6 @@ def calc_trafo_gic(
 def get_conus_polygon():
     """
     Retrieves the polygon representing the continental United States (CONUS).
-
-    Returns
-    -------
-    shapely.geometry.Polygon or None
-        A polygon object representing the boundary of the continental United States,
-        or None if retrieval fails.
     """
     logger.info("Retrieving CONUS polygon...")
 
@@ -378,22 +310,6 @@ def generate_grid_and_mask(
 ):
     """
     Generate a grid and mask for interpolating E-field data, then pickle the results.
-    
-    Parameters
-    ----------
-    e_fields : ndarray
-        Array containing E-field data values
-    mt_coordinates : ndarray
-        Array containing coordinates of MT sites, shape (n_sites, 2)
-    resolution : tuple, optional
-        Grid resolution as (x_points, y_points), default (500, 1000)
-    filename : str, optional
-        Filename to save the pickled grid data, default "grid.pkl"
-        
-    Notes
-    -----
-    This function preprocesses grid data for later use in visualization,
-    creating a masked grid confined to the continental US boundary.
     """
     if mt_coordinates.shape[0] != e_fields.shape[0]:
         logger.warning("Warning: Number of points and values don't match!")
@@ -442,31 +358,6 @@ def extract_line_coordinates(
 ):
     """
     Extract line coordinates from a DataFrame with a geometry column, optionally transforming coordinates.
-
-    Parameters
-    ----------
-    df : DataFrame or GeoDataFrame
-        DataFrame with geometry column containing LineString objects
-    geometry_col : str, optional
-        Name of the geometry column, default 'geometry'
-    source_crs : str, optional
-        The source CRS of the geometries (e.g., 'EPSG:4326' for WGS84)
-    target_crs : str, optional
-        The target CRS, default 'EPSG:4326' for WGS84
-    filename : str, optional
-        If provided, save the extracted coordinates to this file
-
-    Returns
-    -------
-    tuple
-        Tuple containing:
-        - line_coordinates: list of numpy arrays containing line coordinates
-        - valid_indices: list of indices of valid LineStrings
-        
-    Raises
-    ------
-    ValueError
-        If GeoDataFrame has no CRS and source_crs is not provided
     """
     logger.info("Extracting line coordinates...")
     line_coordinates = []
@@ -513,30 +404,7 @@ def get_injection_currents_vectorized(
     df_lines, n_nodes, non_zero_indices, sub_look_up, DATA_LOC, gannon_storm_only=False
 ):
     """
-    Calculate injection currents for power system nodes using vectorized operations.
-    
-    This optimized function computes injection currents for all voltage sources
-    in a single operation, which is significantly faster than iterative methods.
-    
-    Parameters
-    ----------
-    df_lines : DataFrame
-        DataFrame containing transmission line data
-    n_nodes : int
-        Number of nodes in the network
-    non_zero_indices : ndarray
-        Indices of non-zero nodes in the network
-    sub_look_up : dict
-        Dictionary mapping bus names to node indices
-    DATA_LOC : Path
-        Path to data directory (for compatibility with original function)
-    gannon_storm_only : bool, optional
-        If True, only calculate for Gannon storm voltage sources, default False
-        
-    Returns
-    -------
-    dict
-        Dictionary mapping voltage column names to arrays of injection currents
+    Calculate injection currents for power system nodes using vectorized operations
     """
     logger.info("Calculating injection currents (fully vectorized)...")
 
@@ -560,7 +428,6 @@ def get_injection_currents_vectorized(
     # Initialize injection currents matrix (n_nodes x n_cols)
     injection_currents_all = np.zeros((n_nodes, n_cols), dtype=I_eff_mat.dtype)
 
-    # Use np.bincount for each injection column (typically only a few columns)
     for j in range(n_cols):
         pos = np.bincount(to_idx, weights=I_eff_mat[:, j], minlength=n_nodes)
         neg = np.bincount(from_idx, weights=I_eff_mat[:, j], minlength=n_nodes)
@@ -576,22 +443,7 @@ def get_injection_currents_vectorized(
 
 def can_use_float16(arr):
     """
-    Determine if an array can be safely represented in float16 format.
-    
-    Parameters
-    ----------
-    arr : ndarray or tensor
-        Array to check for float16 compatibility
-        
-    Returns
-    -------
-    bool
-        True if the array can be safely represented in float16, False otherwise
-        
-    Notes
-    -----
-    This function evaluates whether an array has values within the range that
-    can be accurately represented by float16 (approx. 6.1e-5 to 65504).
+    Determine if an array can be safely represented in float16 or float 32
     """
     try:
         # Use numpy first
@@ -613,33 +465,12 @@ def can_use_float16(arr):
 def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
     """
     Calculate nodal voltages using PyTorch's linear algebra solvers with vectorization.
-    
-    This function computes nodal voltages by solving the system Y*V = I using 
-    Cholesky decomposition and vectorized operations, with fallbacks for numerical stability.
-    
-    Parameters
-    ----------
-    Y_total : ndarray
-        Total admittance matrix (Y_n + Y_e)
-    injections_data : dict
-        Dictionary mapping voltage source names to injection current arrays
-        
-    Returns
-    -------
-    dict
-        Dictionary mapping voltage source names to nodal voltage arrays
-        
-    Notes
-    -----
-    The function automatically selects the best device (CUDA > MPS > CPU)
-    and precision (float16/float32) based on hardware availability and 
-    numerical requirements.
     """
     logger.info("Calculating nodal voltages using PyTorch...")
-    # Select device: cuda > mps > cpu
+    
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        torch.backends.cudnn.benchmark = True  # Optimize CUDA performance
+        torch.backends.cudnn.benchmark = True
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
@@ -647,12 +478,24 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
 
     if device.type == "cuda":
         torch.cuda.empty_cache()
+        
+        # Check if matrix fits in GPU memory
+        matrix_size_bytes = Y_total.nbytes
+        identity_size_bytes = Y_total.shape[0] * Y_total.shape[1] * 4  # float32
+        total_required = (matrix_size_bytes + identity_size_bytes) * 1.2  # 20% buffer
+        
+        free_memory = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
+        
+        if total_required > free_memory:
+            logger.info(f"Matrix too large for GPU ({total_required/1e9:.1f}GB needed, {free_memory/1e9:.1f}GB free), using CPU")
+            device = torch.device("cpu")
+        else:
+            logger.info(f"Using GPU ({total_required/1e9:.1f}GB needed, {free_memory/1e9:.1f}GB free)")
     else:
         gc.collect()
 
     logger.info(f"Using device: {device}")
 
-    # Use float32 for numerical stability
     Y_tensor = torch.tensor(Y_total, dtype=torch.float32, device=device)
 
     # Adaptive regularization strategy
@@ -727,7 +570,6 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
         V_n = torch.linalg.solve_triangular(L.t(), P, upper=True)
     except Exception as e:
         print(f"Triangular solve failed: {e}")
-        # Fallback to standard solve
         V_n = torch.linalg.solve(Y_reg, injection_batch)
 
     # Convert results
@@ -740,82 +582,9 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
     return results
 
 
-
-def format_np_gic(substations_df, sub_look_up, non_zero_indices, ig, n_nodes, v_col):
-    """
-    Format ground-induced current (GIC) data for substations into a DataFrame.
-    
-    Parameters
-    ----------
-    substations_df : DataFrame
-        DataFrame containing substation information
-    sub_look_up : dict
-        Dictionary mapping bus names to node indices
-    non_zero_indices : ndarray
-        Indices of non-zero nodes in the network
-    ig : ndarray
-        Array of ground-induced currents for non-zero nodes
-    n_nodes : int
-        Total number of nodes in the network
-    v_col : str
-        Voltage column name for labeling
-        
-    Returns
-    -------
-    DataFrame
-        DataFrame with columns 'Substation' and a GIC value column named based on v_col
-    """
-    # Initialize full GIC array with zeros
-    non_reduced_matrix = np.zeros(n_nodes)
-
-    # Assign computed ground currents to the corresponding substations
-    for reduced_idx, full_idx in enumerate(non_zero_indices):
-        non_reduced_matrix[full_idx] = ig[reduced_idx]
-
-    # Extract valid indices (excluding "Substation 1")
-    indices = [
-        sub_look_up[sub]
-        for sub in substations_df["name"]
-        if sub_look_up.get(sub) is not None and sub != "Substation 1"
-    ]
-
-    # Get corresponding substations
-    valid_substations = [
-        sub for sub in substations_df["name"] if sub_look_up.get(sub) in indices
-    ]
-
-    # Create and return DataFrame
-    return pd.DataFrame(
-        {
-            "Substation": valid_substations,
-            f"GIC_{v_col.split('V_')[1]}": non_reduced_matrix[indices],
-        }
-    )
-
-
 def find_storm_maxima(E_pred, gannon_times, window_hours=(5 / 60), num_peaks=500):
     """
     Find the maximum E-field magnitudes during a geomagnetic storm.
-    
-    Parameters
-    ----------
-    E_pred : ndarray
-        Predicted E-field values, shape (time_steps, sites, components)
-    gannon_times : ndarray
-        Array of timestamps corresponding to E_pred
-    window_hours : float, optional
-        Window size in hours for smoothing and peak detection, default 5 minutes (5/60)
-    num_peaks : int, optional
-        Maximum number of peaks to return, default 500
-        
-    Returns
-    -------
-    list of dict
-        List of dictionaries, each containing:
-        - peak_time: timestamp of the peak
-        - site_magnitudes: E-field magnitudes at all sites for this peak
-        - total_magnitude: sum of magnitudes across all sites
-        - smoothed_magnitude: smoothed total magnitude value
     """
     window_samples = int(window_hours * 60)
     site_maxE_mags = np.sqrt(np.sum(E_pred**2, axis=2))
@@ -849,33 +618,10 @@ def find_storm_maxima(E_pred, gannon_times, window_hours=(5 / 60), num_peaks=500
 def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
     """
     Process Gannon storm data and extract voltage values at peak times.
-    
-    Parameters
-    ----------
-    DATA_LOC : Path
-        Path to the data directory
-    df_lines : DataFrame
-        DataFrame containing transmission line data
-    results_path : str
-        Path to the HDF5 file containing geomagnetic data
-    peak_time : bool, optional
-        If True, find peaks in E-field data; if False, use time-based sampling, default False
-    res : int, optional
-        Time resolution in minutes for sampling when peak_time=False, default 30
-        
-    Returns
-    -------
-    tuple
-        Tuple containing:
-        - df_lines: Updated DataFrame with voltage values
-        - mt_coords: Coordinates of MT sites
-        - mt_names: Names of MT sites
-        - gannon_e: E-field data for Gannon storm
-        - v_cols: List of voltage column names
     """
     logger.info("Loading and processing Gannon GIC data...")
 
-    gannon_ds = xr.open_dataset(DATA_LOC / "ds_gannon.nc")
+    gannon_ds = xr.open_dataset(DATA_LOC / "storm_maxes" / "ds_gannon.nc")
     gannon_times = gannon_ds.time.values
 
     if peak_time:
@@ -906,7 +652,7 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
     peak_indices = np.searchsorted(gannon_times, peak_times)
 
     # Load delaunay array - Vs
-    arr_v = np.load(DATA_LOC / "delaunay_v_gannon.npy")
+    arr_v = np.load(DATA_LOC / "storm_maxes" / "delaunay_v_gannon.npy")
 
     # Index Vs during peak E
     arr_v_peaks = arr_v[peak_indices]
@@ -968,16 +714,7 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
 def pre_compute_ze(Y):
     """
     Compute impedance matrix from admittance matrix with zero handling.
-    
-    Parameters
-    ----------
-    Y : ndarray
-        Admittance matrix
-        
-    Returns
-    -------
-    ndarray
-        Impedance matrix with zeros where admittance is zero
+
     """
     with np.errstate(divide="ignore", invalid="ignore"):
         Z = np.reciprocal(Y, where=Y != 0)  # Avoids explicit np.isinf check
@@ -988,24 +725,6 @@ def pre_compute_ze(Y):
 def solve_total_nodal_gic_optimized(Z, V_all):
     """
     Vectorized nodal GIC solution for stacked voltage components.
-    
-    Parameters
-    ----------
-    Z : ndarray
-        Impedance matrix
-    V_all : ndarray
-        Matrix of voltage solutions stacked by column
-        
-    Returns
-    -------
-    ndarray
-        Optimized solution for nodal GICs for all voltage sources
-        
-    Notes
-    -----
-    This function solves the regularized system (Z^T·Z)·I = Z^T·V for all
-    voltage sources simultaneously, applying a scaling factor of 3 for
-    three-phase representation.
     """
     Y_reg = Z.T @ Z + 1e-20 * np.eye(Z.shape[1])
     return spsolve(Y_reg, Z.T @ V_all.T) * 3
@@ -1014,26 +733,6 @@ def solve_total_nodal_gic_optimized(Z, V_all):
 def main(generate_grid_only=False, gannon_storm_only=False): 
     """
     Main function to calculate GICs in the power system.
-    
-    Parameters
-    ----------
-    generate_grid_only : bool, optional
-        If True, only generate grid data for plotting, default False
-    gannon_storm_only : bool, optional
-        If True, only process Gannon storm data, default False
-        
-    Notes
-    -----
-    This function orchestrates the entire GIC calculation workflow:
-    1. Load power system data
-    2. Process geomagnetic field data
-    3. Generate admittance matrices
-    4. Calculate nodal voltages
-    5. Compute GICs in transmission lines and transformers
-    6. Save results to CSV files
-    
-    When generate_grid_only=True, it only creates interpolated grids
-    of E-field data for visualization purposes.
     """
     results_path = "statistical_analysis/geomagnetic_data_return_periods.h5"
 
@@ -1066,6 +765,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
         df_lines, mt_coords, mt_names, gannon_e, v_cols = process_gannon(
             DATA_LOC, df_lines, results_path, res=1
         )
+        logger.info("Gannon storm data processed successfully.")
     else:
         # Load and process GIC data
         (
@@ -1080,242 +780,293 @@ def main(generate_grid_only=False, gannon_storm_only=False):
         ) = load_and_process_gic_data(DATA_LOC, df_lines, results_path)
 
     n_nodes = len(sub_look_up)  # Number of nodes in the network
+    
+    # Get 1000 dfs of winding GICs and np gics
+    logger.info("Starting GIC calculations...")
+    for i, trafo_data in enumerate(trafos_data):
+        
+        if i < 500:
+            continue
 
-    if not generate_grid_only:
-        # Get 1000 dfs of winding GICs and np gics
-        logger.info("Starting GIC calculations...")
-        for i, trafo_data in enumerate(trafos_data):
+        # Save the GIC DataFrame
+        filename = processed_gic_path / f"winding_gic_rand_{i}.csv"
 
-            # if i % 2 == 0:
-            #     continue
-
-            # Save the GIC DataFrame
-            filename = processed_gic_path / f"winding_gic_rand_{i}.csv"
-
-            if os.path.exists(filename) and not gannon_storm_only:
-                continue
-
-            logger.info(f"Processing iteration {i}...")
-            # Generate a random admittance matrix
-            logger.info("Generating random admittance matrix...")
-
-            Y_n, Y_e, df_transformers = random_admittance_matrix(
-                substation_buses,
-                trafo_data,
-                bus_ids_map,
-                sub_look_up,
-                df_lines,
-                df_substations_info,
+        if os.path.exists(filename) and not gannon_storm_only:
+            continue
+        
+        if gannon_storm_only:
+            filename_gic = (
+                DATA_LOC / "gic" / "ground_gic" / f"ground_gic_gannon_{i}.csv"
             )
 
-            # Find indices of rows/columns where all elements are zero in the admittance matrix
-            zero_row_indices = np.where(np.all(Y_n == 0, axis=1))[0]  # Zero rows
+            if os.path.exists(filename_gic):
+                continue
 
-            # Get the non-zero row/col indices
-            non_zero_indices = np.setdiff1d(np.arange(Y_n.shape[0]), zero_row_indices)
+        logger.info(f"Processing iteration {i}...")
+        # Generate a random admittance matrix
+        logger.info("Generating random admittance matrix...")
 
-            # Reduce the Y_n and Y_e matrices
-            Y_n = Y_n[np.ix_(non_zero_indices, non_zero_indices)]
-            Y_e = Y_e[np.ix_(non_zero_indices, non_zero_indices)]
+        Y_n, Y_e, df_transformers = random_admittance_matrix(
+            substation_buses,
+            trafo_data,
+            bus_ids_map,
+            sub_look_up,
+            df_lines,
+            df_substations_info,
+        )
 
-            # Y total is sum of earthing and network impedances
-            Y_total = Y_n + Y_e
+        # Find indices of rows/columns where all elements are zero in the admittance matrix
+        zero_row_indices = np.where(np.all(Y_n == 0, axis=1))[0]  # Zero rows
 
-            # Get injections data
-            injections_data = get_injection_currents_vectorized(
-                df_lines,
-                n_nodes,
-                non_zero_indices,
-                sub_look_up,
-                DATA_LOC,
-                gannon_storm_only=gannon_storm_only,
+        # Get the non-zero row/col indices
+        non_zero_indices = np.setdiff1d(np.arange(Y_n.shape[0]), zero_row_indices)
+
+        # Convert to smaller data types BEFORE operations
+        if can_use_float16(Y_n) and can_use_float16(Y_e):
+            Y_n = Y_n.astype(np.float16)
+            Y_e = Y_e.astype(np.float16)
+            dtype = np.float16
+        elif (np.max(np.abs(Y_n)) < 3.4e38 and np.max(np.abs(Y_e)) < 3.4e38):
+            Y_n = Y_n.astype(np.float32) 
+            Y_e = Y_e.astype(np.float32)
+            dtype = np.float32
+        else:
+            dtype = np.float64
+
+        logger.info(f"Using {dtype} for matrices")
+
+        Y_n = Y_n[np.ix_(non_zero_indices, non_zero_indices)]
+        Y_e = Y_e[np.ix_(non_zero_indices, non_zero_indices)]
+
+        Y_total = np.add(Y_n, Y_e, dtype=dtype)
+    
+        del Y_n; import gc; gc.collect()
+        
+        # Get injections data
+        injections_data = get_injection_currents_vectorized(
+            df_lines,
+            n_nodes,
+            non_zero_indices,
+            sub_look_up,
+            DATA_LOC,
+            gannon_storm_only=gannon_storm_only,
+        )
+
+        nodal_voltages = nodal_voltage_calculation_torch_vectorized(Y_total, injections_data)
+
+        # If gannon only, let's solve for ground currents
+        if gannon_storm_only:
+            filename_gic = (
+                Path("/data/archives/nfs/spw-geophy/data") / "gic" / "ground_gic" / f"ground_gic_gannon_{i}.csv"
             )
 
-            nodal_voltages = nodal_voltage_calculation_torch_vectorized(Y_total, injections_data)
-
-            # If gannon only, let's solve for ground currents
-            if gannon_storm_only:
-                dfs_np_gic = []  # List to store np gic dataframes
-
-                Z_e = pre_compute_ze(Y_e)
-                v_all = np.vstack([nodal_voltages[v_col] for v_col in v_cols])
-
-                ig_all = solve_total_nodal_gic_optimized(Z_e, v_all)
-                # Format each time step's GIC results
-                for timestep in range(ig_all.shape[1]):
-                    ig = ig_all[:, timestep]  # Get GIC for this timestep
-
-                    # Format using your existing function
-                    df_ground_gic = format_np_gic(
-                        df_substations_info,
-                        sub_look_up,
-                        non_zero_indices,
-                        ig,
-                        n_nodes,
-                        v_cols[timestep],  # Use corresponding voltage column name
-                    )
-                    dfs_np_gic.append(df_ground_gic)
-
-                df_final_gic = reduce(
-                    lambda left, right: pd.merge(
-                        left, right, on="Substation", how="outer"
-                    ),
-                    dfs_np_gic,
-                )
-
-                filename_gic = (
-                    processed_gic_path / "ground_gic" / f"ground_gic_gannon_{i}.csv"
-                )  # Adjust filename as needed
-
-                if os.path.exists(filename_gic):
-                    continue
-
-                df_final_gic.to_csv(filename_gic, index=False)
+            if os.path.exists(filename_gic):
                 continue
-            else:
-                df_lines_copy = df_lines.copy()
-                df_lines_copy["from_bus"] = df_lines_copy["from_bus"].apply(
-                    lambda x: sub_look_up.get(x)
-                )
-                df_lines_copy["to_bus"] = df_lines_copy["to_bus"].apply(
-                    lambda x: sub_look_up.get(x)
-                )
-                # Calculate GIC for each return period
-                gic_data = {}
-                for period in ["gannon"] + list(return_periods):
-                    # Check if V_gannon exists in nodal voltages
+
+            Z_e = pre_compute_ze(Y_e)
+            v_all = np.vstack([nodal_voltages[c] for c in v_cols])
+            ig_all = solve_total_nodal_gic_optimized(Z_e, v_all)
+
+            idx_series = df_substations_info["name"].map(sub_look_up)
+            mask = idx_series.notna() & (df_substations_info["name"] != "Substation 1")
+            valid_substations = df_substations_info.loc[mask, "name"].to_numpy()
+            valid_indices = idx_series[mask].astype(int).to_numpy()
+
+            non_reduced_mat = np.zeros((n_nodes, ig_all.shape[1]), dtype=ig_all.dtype)
+            non_reduced_mat[non_zero_indices] = ig_all
+            gic_values_T = non_reduced_mat[valid_indices].T  # (T, S)
+
+            data = {"Substation": valid_substations}
+            for col, vals in zip(v_cols, gic_values_T):
+                data[f"GIC_{col.split('V_')[1]}"] = vals
+
+            pd.DataFrame(data).to_csv(filename_gic, index=False)
+
+            continue
+        else:
+            df_lines_copy = df_lines.copy()
+            df_lines_copy["from_bus"] = df_lines_copy["from_bus"].apply(
+                lambda x: sub_look_up.get(x)
+            )
+            df_lines_copy["to_bus"] = df_lines_copy["to_bus"].apply(
+                lambda x: sub_look_up.get(x)
+            )
+            
+            def _calc_period(period):
+                try:
                     if f"V_{period}" not in nodal_voltages:
                         logger.warning(f"Nodal voltages missing for {period}")
-                        continue
+                        return period, None, None
+                    
+                    # Each thread gets its own copy to avoid race conditions
+                    df_lines_local = df_lines_copy.copy()
+                    df_transformers_local = df_transformers.copy()
+                    
                     V_nodal = nodal_voltages[f"V_{period}"]
+                    
                     df_gic = calculate_GIC(
-                        df_lines_copy, V_nodal, f"V_{period}", non_zero_indices, n_nodes
+                        df_lines_local, V_nodal, f"V_{period}", non_zero_indices, n_nodes
                     )
-                    gic_data[period] = calc_trafo_gic(
+                    gic = calc_trafo_gic(
                         sub_look_up,
-                        df_transformers.copy(),
+                        df_transformers_local,
                         V_nodal,
                         sub_ref,
                         n_nodes,
                         non_zero_indices,
                         f"{period}-year-hazard",
                     )
+                    return period, df_gic, gic
+                    
+                except Exception as e:
+                    logger.error(f"Error calculating GIC for period {period}: {str(e)}")
+                    return period, None, None
+
+            gic_data = {}
+            calculation_success = True
+
+            try:
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = {
+                        pool.submit(_calc_period, p): p
+                        for p in ["gannon", *return_periods]
+                    }
+                    for fut in as_completed(futures):
+                        try:
+                            period, df_gic_res, gic_res = fut.result()
+                            if df_gic_res is not None and gic_res is not None:
+                                gic_data[period] = gic_res
+                            else:
+                                logger.warning(f"Skipping period {period} due to calculation error")
+                        except Exception as e:
+                            failed_period = futures[fut]
+                            logger.error(f"Failed to get result for period {failed_period}: {str(e)}")
+                            calculation_success = False
+
+                # Check if we have valid results before processing
+                if not gic_data or not calculation_success:
+                    logger.error(f"Calculation failed for iteration {i}, skipping...")
+                    continue  # Skip this iteration entirely
+
+                # Validate that we have the expected periods
+                expected_periods = ["gannon"] + list(return_periods)
+                missing_periods = [p for p in expected_periods if p not in gic_data]
+                if missing_periods:
+                    logger.warning(f"Missing data for periods: {missing_periods}")
+                    # Decide if you want to continue with partial data or skip
+                    if len(missing_periods) > len(expected_periods) / 2:  # If more than half failed
+                        logger.error(f"Too many periods failed for iteration {i}, skipping...")
+                        continue
 
                 # Prepare GIC DataFrames for each period
                 winding_gic_df_list = []
                 for period, gic_values in gic_data.items():
-                    hash_gic_period = [
-                        (trafo, winding, gic)
-                        for trafo, windings in gic_values.items()
-                        for winding, gic in windings.items()
-                    ]
-                    winding_gic_df = pd.DataFrame(
-                        hash_gic_period,
-                        columns=[
-                            "Transformer",
-                            "Winding",
-                            f"{period}-year-hazard A/ph",
-                        ],
-                    )
-                    winding_gic_df_list.append(winding_gic_df)
+                    try:
+                        # Validate gic_values structure
+                        if not gic_values or not isinstance(gic_values, dict):
+                            logger.warning(f"Invalid GIC data for period {period}, skipping period")
+                            continue
+                            
+                        hash_gic_period = [
+                            (trafo, winding, gic)
+                            for trafo, windings in gic_values.items()
+                            for winding, gic in windings.items()
+                            if isinstance(windings, dict)  # Safety check
+                        ]
+                        
+                        if not hash_gic_period:  # No valid data
+                            logger.warning(f"No valid GIC data for period {period}")
+                            continue
+                            
+                        winding_gic_df = pd.DataFrame(
+                            hash_gic_period,
+                            columns=[
+                                "Transformer",
+                                "Winding",
+                                f"{period}-year-hazard A/ph",
+                            ],
+                        )
+                        winding_gic_df_list.append(winding_gic_df)
+                    except Exception as e:
+                        logger.error(f"Error processing GIC data for period {period}: {str(e)}")
+                        continue
+
+                # Check if we have any valid dataframes
+                if not winding_gic_df_list:
+                    logger.error(f"No valid GIC dataframes created for iteration {i}, skipping...")
+                    continue
 
                 # Merge all GIC dataframes
-                winding_gic_df = pd.concat(winding_gic_df_list, axis=1).loc[
-                    :, ~pd.concat(winding_gic_df_list, axis=1).columns.duplicated()
-                ]
+                try:
+                    winding_gic_df = pd.concat(winding_gic_df_list, axis=1).loc[
+                        :, ~pd.concat(winding_gic_df_list, axis=1).columns.duplicated()
+                    ]
+                    
+                    # Check if the resulting dataframe is valid
+                    if winding_gic_df.empty:
+                        logger.error(f"Empty dataframe after merge for iteration {i}, skipping...")
+                        continue
 
-                # Finalize transformer data merge
-                df_transformers["Transformer"] = df_transformers["name"]
-                winding_gic_df = winding_gic_df.merge(
-                    df_transformers[["sub_id", "Transformer", "latitude", "longitude"]],
-                    on="Transformer",
-                    how="inner",
-                )
+                    # Finalize transformer data merge
+                    df_transformers["Transformer"] = df_transformers["name"]
+                    winding_gic_df = winding_gic_df.merge(
+                        df_transformers[["sub_id", "Transformer", "latitude", "longitude"]],
+                        on="Transformer",
+                        how="inner",
+                    )
+                    
+                    # Final validation before saving
+                    if winding_gic_df.empty:
+                        logger.error(f"Empty dataframe after transformer merge for iteration {i}, skipping...")
+                        continue
 
-                # Save the GIC DataFrame
-                winding_gic_df.to_csv(filename, index=False)
-    else:
-        logger.info("Generating grid and mask for plotting...")
-        # Specify the file paths for grid 75, 100, 150, 200 and 250
-        grid_e_75_path = DATA_LOC / "grid_e_75.pkl"
-        grid_e_100_path = DATA_LOC / "grid_e_100.pkl"
-        grid_e_150_path = DATA_LOC / "grid_e_150.pkl"
-        grid_e_200_path = DATA_LOC / "grid_e_200.pkl"
-        grid_e_250_path = DATA_LOC / "grid_e_250.pkl"
-        grid_e_500_path = DATA_LOC / "grid_e_500.pkl"
-        grid_e_1000_path = DATA_LOC / "grid_e_1000.pkl"
-        grid_e_gannon_path = DATA_LOC / "grid_e_gannon.pkl"
+                    # Save the GIC DataFrame only if it's valid
+                    winding_gic_df.to_csv(filename, index=False)
+                    logger.info(f"Successfully saved GIC data for iteration {i}")
+                    
+                except Exception as e:
+                    logger.error(f"Error during dataframe processing for iteration {i}: {str(e)}")
+                    continue
 
-        grid_file_paths = [
-            grid_e_75_path,
-            grid_e_100_path,
-            grid_e_150_path,
-            grid_e_200_path,
-            grid_e_250_path,
-            grid_e_500_path,
-            grid_e_1000_path,
-            grid_e_gannon_path,
-        ]
+            except Exception as e:
+                logger.error(f"Critical error in iteration {i}: {str(e)}")
+                continue  # Skip to next iteration
+            
+            filename_gic = (
+                processed_gnd_gic_path / f"ground_gic{i}.csv"
+            )
 
-        # Prepare the e fields for plotting
-        e_field_75 = e_fields[75]
-        e_field_100 = e_fields[100]
-        e_field_150 = e_fields[150]
-        e_field_200 = e_fields[200]
-        e_field_250 = e_fields[250]
-        e_field_500 = e_fields[500]
-        e_field_1000 = e_fields[1000]
-        e_field_gannon = gannon_e
+            if os.path.exists(filename_gic):
+                continue
 
-        e_fields_period = [
-            e_field_75,
-            e_field_100,
-            e_field_150,
-            e_field_200,
-            e_field_250,
-            e_field_500,
-            e_field_1000,
-            e_field_gannon,
-        ]
+            Z_e = pre_compute_ze(Y_e)
+            del Y_e; gc.collect()
+            
+            v_all = np.vstack([nodal_voltages[c] for c in v_cols])
+            ig_all = solve_total_nodal_gic_optimized(Z_e, v_all)
+            
+            del Z_e; gc.collect()
 
-        # Prepare the transmission lines data for plotting
-        for grid_filename, e_field in zip(grid_file_paths, e_fields_period):
-            if not os.path.exists(grid_filename):
-                # Generate and save the grid and mask
-                generate_grid_and_mask(
-                    e_field,
-                    mt_coords,
-                    resolution=(500, 1000),
-                    filename=grid_filename,
-                )
+            idx_series = df_substations_info["name"].map(sub_look_up)
+            mask = idx_series.notna() & (df_substations_info["name"] != "Substation 1")
+            valid_substations = df_substations_info.loc[mask, "name"].to_numpy()
+            valid_indices = idx_series[mask].astype(int).to_numpy()
 
-        logger.info("Grid and mask generated and saved.")
+            non_reduced_mat = np.zeros((n_nodes, ig_all.shape[1]), dtype=ig_all.dtype)
+            non_reduced_mat[non_zero_indices] = ig_all
+            gic_values_T = non_reduced_mat[valid_indices].T  # (T, S)
 
-        # Save df_lines too
-        df_lines.to_pickle(DATA_LOC / "df_lines.pkl")
+            data = {"Substation": valid_substations}
+            for col, vals in zip(v_cols, gic_values_T):
+                data[f"GIC_{col.split('V_')[1]}"] = vals
 
-    line_coords_file = DATA_LOC / "line_coords.pkl"
-    source_crs = "EPSG:4326"
-    if not os.path.exists(line_coords_file):
-        line_coordinates, valid_indices = extract_line_coordinates(
-            df_lines, filename=line_coords_file
-        )
+            pd.DataFrame(data).to_csv(filename_gic, index=False)
 
 
 if __name__ == "__main__":
     # Set Torch fall back to cpu... although slower
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-    
-    # Get data data log and configure logger
-    DATA_LOC = get_data_dir()
-    processed_gic_path = DATA_LOC / "gic"
-    os.makedirs(processed_gic_path, exist_ok=True)
-    
-    logger = setup_logger(log_file="logs/gic_calculation.log")
 
-    # Define return periods
-    return_periods = np.arange(50, 251, 25)
+    gannon_storm_only = True
 
-    gannon_storm_only = False
-
-    main(generate_grid_only=False, gannon_storm_only=False)
+    main(gannon_storm_only=gannon_storm_only)
