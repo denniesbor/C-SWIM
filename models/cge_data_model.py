@@ -1,46 +1,39 @@
+"""
+CGE Data Model Manager
+Author: Dennies Bor
+Date: August 2025
+
+This module provides data management and execution framework for Computable General Equilibrium (CGE) models.
+Handles Social Accounting Matrix (SAM) data preparation, model execution, and solution validation.
+"""
 
 import os
-import numpy as np
 import argparse
+
+import numpy as np
 import pandas as pd
-from pathlib import Path
 from models.cge_model import StdModelDef
 
-from configs import setup_logger, get_data_dir, IPOPT_EXEC
+from configs import setup_logger, get_data_dir
+
 DATA_LOC = get_data_dir()
 logger = setup_logger("SAMDataManager")
+
+IPOPT_EXEC = "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"
+
 
 class SAMDataManager:
     """
     Manages Social Accounting Matrix (SAM) data preparation and storage
     for CGE modeling.
     """
-    
+
     def __init__(self, data_dir=None):
-        """
-        Initialize the SAM Data Manager.
-        
-        Parameters:
-        -----------
-        data_dir : str or Path, optional
-            Directory to store SAM data files
-        """
+
         self.data_dir = data_dir if data_dir else "sam_data"
-    
+
     def load_sam(self, sam_type="japan"):
-        """
-        Load a SAM dataset by type.
-        
-        Parameters:
-        -----------
-        sam_type : str
-            Type of SAM to load: "japan", "simple", or "us"
-            
-        Returns:
-        --------
-        tuple
-            (sam_df, h_list, i_list, u_list) - SAM DataFrame and account lists
-        """
+
         if sam_type.lower() == "japan":
             return self.text_book_japan_sam()
         elif sam_type.lower() == "simple":
@@ -49,14 +42,37 @@ class SAMDataManager:
             return self.get_us_sam()
         else:
             raise ValueError(f"Unknown SAM type: {sam_type}")
-    
+
     def text_book_japan_sam(self):
         """Create textbook example SAM for Japan"""
-        # SAM Japan data implementation
         data = [
             [1558469, 8427693, 1496991, 0, 0, 0, 0, 3965927, 0, 967198, 72018],
-            [2462949, 130321011, 68646492, 0, 0, 0, 0, 64927161, 459179, 39070695, 46597315],
-            [2273437, 63503715, 160713811, 0, 0, 0, 0, 231268309, 85247038, 90250845, 10817384],
+            [
+                2462949,
+                130321011,
+                68646492,
+                0,
+                0,
+                0,
+                0,
+                64927161,
+                459179,
+                39070695,
+                46597315,
+            ],
+            [
+                2273437,
+                63503715,
+                160713811,
+                0,
+                0,
+                0,
+                0,
+                231268309,
+                85247038,
+                90250845,
+                10817384,
+            ],
             [6167952, 33816669, 149889160, 0, 0, 0, 0, 0, 0, 0, 0],
             [1372650, 59034654, 234353029, 0, 0, 0, 0, 0, 0, 0, 0],
             [534232, 14436136, 19877410, 0, 0, 0, 0, 0, 34847778, 0, 0],
@@ -66,114 +82,131 @@ class SAMDataManager:
             [0, 0, 0, 0, 0, 0, 0, 140265517, -2815303, 0, -7161476],
             [1974129, 39254377, 9096735, 0, 0, 0, 0, 0, 0, 0, 0],
         ]
-        labels = ["AGR", "MAN", "SRV", "CAP", "LAB", "IDT", "TRF", "HOH", "GOV", "INV", "EXT"]
+        labels = [
+            "AGR",
+            "MAN",
+            "SRV",
+            "CAP",
+            "LAB",
+            "IDT",
+            "TRF",
+            "HOH",
+            "GOV",
+            "INV",
+            "EXT",
+        ]
         h_list = ["CAP", "LAB"]
         i_list = ["AGR", "MAN", "SRV"]
         u_list = labels
 
         sam_japan = pd.DataFrame(data, index=labels, columns=labels, dtype=np.float64)
         sam_japan.loc["IDT", "GOV"] = 0
-        
+
         factor = 1e-5
         return sam_japan * factor, h_list, i_list, u_list
-    
+
     def text_book_simple_sam(self):
         """
-        Create a simple textbook example.
-        
-        Returns:
-        --------
-        pd.DataFrame
-            Social Accounting Matrix
+        Create a simple textbook example SAM.
+        Data matrix represents flows between: BRD (Bread), MLK (Milk), CAP (Capital),
+        LAB (Labor), IDT (Indirect Tax), TRF (Transfers), HOH (Households),
+        GOV (Government), INV (Investment), EXT (External/Rest of World)
         """
-        
-        # Create the data matrix
+
         data = [
-            [21, 8, None, None, None, None, 20, 19, 16, 8], # BRD
-            [17, 9, None, None, None, None, 30, 14, 15, 4], # MLK
-            [20, 30, None, None, None, None, None, None, None, None], # CAP
-            [15, 25, None, None, None, None, None, None, None, None], # LAB
-            [5, 4, None, None, None, None, None, None, None, None], # IDT
-            [1, 2, None, None, None, None, None, None, None, None], # TRF
-            [None, None, 50, 40, None, None, None, None, None, None], # HOH
-            [None, None, None, None, 9, 3, 23, None, None, None], # GOV
-            [None, None, None, None, None, None, 17, 2, None, 12], # INV
-            [13, 11, None, None, None, None, None, None, None, None]  # EXT
+            [21, 8, None, None, None, None, 20, 19, 16, 8],  # BRD
+            [17, 9, None, None, None, None, 30, 14, 15, 4],  # MLK
+            [20, 30, None, None, None, None, None, None, None, None],  # CAP
+            [15, 25, None, None, None, None, None, None, None, None],  # LAB
+            [5, 4, None, None, None, None, None, None, None, None],  # IDT
+            [1, 2, None, None, None, None, None, None, None, None],  # TRF
+            [None, None, 50, 40, None, None, None, None, None, None],  # HOH
+            [None, None, None, None, 9, 3, 23, None, None, None],  # GOV
+            [None, None, None, None, None, None, 17, 2, None, 12],  # INV
+            [13, 11, None, None, None, None, None, None, None, None],  # EXT
         ]
 
-        # Row and column labels
-        labels = ['BRD', 'MLK', 'CAP', 'LAB', 'IDT', 'TRF', 'HOH', 'GOV', 'INV', 'EXT']
-        
-        # Define account lists
+        labels = ["BRD", "MLK", "CAP", "LAB", "IDT", "TRF", "HOH", "GOV", "INV", "EXT"]
+
         h_list = ["CAP", "LAB"]
-        i_list = ['BRD', 'MLK']
-        u_list = ['BRD', 'MLK', "CAP", "LAB", "IDT", "TRF", "HOH", "GOV", "INV", "EXT"]
+        i_list = ["BRD", "MLK"]
+        u_list = ["BRD", "MLK", "CAP", "LAB", "IDT", "TRF", "HOH", "GOV", "INV", "EXT"]
 
-
-        # Create the DataFrame
         df = pd.DataFrame(data, index=labels, columns=labels)
         df = df.astype(np.float64)
-        
-        return df,  h_list, i_list, u_list
-    
+
+        return df, h_list, i_list, u_list
+
     def get_us_sam(self):
         """
         Load the US SAM data.
-        
-        Returns:
-        --------
-        pd.DataFrame
-            Scaled Social Accounting Matrix for the US
         """
 
         # Sam US
         sam_us = pd.read_csv(DATA_LOC / "sam" / "us_balanced_sam.csv", index_col=0)
 
+        print(sam_us)
+
         # convert just the numeric data
         sam_us = sam_us.astype(np.float64)
-        
+
         # Define account lists
         h_list = ["CAP", "LAB"]
-        i_list = ['AGR', 'MINING', 'UTIL_CONST', 'MANUF', 'TRADE_TRANSP', 'INFO', 'FIRE',
-                'PROF_OTHER', 'EDUC_ENT', 'G']
-        u_list = ['AGR', 'MINING', 'UTIL_CONST', 'MANUF', 'TRADE_TRANSP', 'INFO', 'FIRE',
-                'PROF_OTHER', 'EDUC_ENT', 'G', 'CAP', 'LAB', 'IDT', 'TRF', 'HOH', 'GOV',
-                'INV', 'EXT']
+        i_list = [
+            "AGR",
+            "MINING",
+            "UTIL_CONST",
+            "MANUF",
+            "TRADE_TRANSP",
+            "INFO",
+            "FIRE",
+            "PROF_OTHER",
+            "EDUC_ENT",
+            "G",
+        ]
+        u_list = [
+            "AGR",
+            "MINING",
+            "UTIL_CONST",
+            "MANUF",
+            "TRADE_TRANSP",
+            "INFO",
+            "FIRE",
+            "PROF_OTHER",
+            "EDUC_ENT",
+            "G",
+            "CAP",
+            "LAB",
+            "IDT",
+            "TRF",
+            "HOH",
+            "GOV",
+            "INV",
+            "EXT",
+        ]
 
         # Scale the SAM data
         factor = 1e-3
         return sam_us * factor, h_list, i_list, u_list
-    
+
     def prepare_sam_data(self, sam_data, output_name=None):
         """
         Prepare and save SAM data files for CGE modeling.
-        
-        Parameters:
-        -----------
-        sam_data : tuple
-            (sam_df, h_list, i_list, u_list) tuple from load_sam method
-        output_name : str, optional
-            Name for the output directory
-            
-        Returns:
-        --------
-        str
-            Path to the created data directory
         """
         sam_df, h_list, i_list, u_list = sam_data
         data_dir = f"{output_name or 'default'}_data"
         data_dir = os.path.join(self.data_dir, data_dir)
-        
+
         os.makedirs(data_dir, exist_ok=True)
 
         # Write set files
-        with open(os.path.join(data_dir, "set-h.csv"), 'w') as f:
+        with open(os.path.join(data_dir, "set-h.csv"), "w") as f:
             f.write("h\n" + "\n".join(h_list))
 
-        with open(os.path.join(data_dir, "set-i.csv"), 'w') as f:
+        with open(os.path.join(data_dir, "set-i.csv"), "w") as f:
             f.write("i\n" + "\n".join(i_list))
 
-        with open(os.path.join(data_dir, "set-u.csv"), 'w') as f:
+        with open(os.path.join(data_dir, "set-u.csv"), "w") as f:
             f.write("u\n" + "\n".join(u_list))
 
         # Write param-sam.csv
@@ -187,224 +220,191 @@ class CGEModelRunner:
     """
     Runs CGE models with prepared SAM data.
     """
-    
+
     def __init__(self, model_def_class=StdModelDef):
-        """
-        Initialize the CGE Model Runner.
-        
-        Parameters:
-        -----------
-        model_def_class : class
-            The model definition class (default: StdModelDef)
-        """
+
         self.model_def_class = model_def_class
-    
+
     def run_model(self, data_dir, solver_options=None, tee=True):
         """
-        Run the CGE model with the specified data.
-        
-        Parameters:
-        -----------
-        data_dir : str
-            Directory containing the prepared SAM data files
-        solver_options : dict, optional
-            Dictionary of solver options
-        tee : bool, optional
-            Whether to display solver output
-            
-        Returns:
-        --------
-        instance
-            The solved model instance
+        Run the CGE model
         """
-        
+
         from pyomo.environ import DataPortal, SolverFactory
-        
+
         # Default solver options
         if solver_options is None:
             solver_options = {
-                'hessian_approximation': 'limited-memory',
-                'max_iter': 5000,
-                'tol': 1e-4,
-                'acceptable_tol': 1e-3,
-                'bound_push': 1e-2,
-                'mu_strategy': 'adaptive',
-                'print_level': 5,
-                'halt_on_ampl_error': 'yes'
+                "hessian_approximation": "limited-memory",
+                "max_iter": 5000,
+                "tol": 1e-4,
+                "acceptable_tol": 1e-3,
+                "bound_push": 1e-2,
+                "mu_strategy": "adaptive",
+                "print_level": 5,
+                "halt_on_ampl_error": "yes",
             }
-        
+
         # Build model and load data
         model_def = self.model_def_class()
         abstract_model = model_def.model()
         data = DataPortal()
-        
+
         # Load sets and data
-        data.load(filename=os.path.join(data_dir, 'set-h.csv'), format='set', set='h')
-        data.load(filename=os.path.join(data_dir, 'set-i.csv'), format='set', set='i')
-        data.load(filename=os.path.join(data_dir, 'set-u.csv'), format='set', set='u')
-        data.load(filename=os.path.join(data_dir, 'param-sam.csv'), param='sam', format='array')
+        data.load(filename=os.path.join(data_dir, "set-h.csv"), format="set", set="h")
+        data.load(filename=os.path.join(data_dir, "set-i.csv"), format="set", set="i")
+        data.load(filename=os.path.join(data_dir, "set-u.csv"), format="set", set="u")
+        data.load(
+            filename=os.path.join(data_dir, "param-sam.csv"),
+            param="sam",
+            format="array",
+        )
 
         # Create instance and solve
         instance = abstract_model.create_instance(data)
-        solver = SolverFactory('ipopt', executable=IPOPT_EXEC)
-        
+        solver = SolverFactory("ipopt", executable=IPOPT_EXEC)
+
         for option, value in solver_options.items():
             solver.options[option] = value
 
         results = solver.solve(instance, tee=tee)
         logger.info(f"Solver status: {results.solver.status}")
         logger.info(f"Termination condition: {results.solver.termination_condition}")
-        
+
         return instance
-    
-    
+
+
 def compare_solution_vs_sam(instance, sam_df, scale_factor=1.0):
     """
     Compare key flows from a solved Pyomo instance against SAM data.
-    
-    Parameters
-    ----------
-    instance : Pyomo ConcreteModel
-        The solved Pyomo instance.
-    sam_df : pandas.DataFrame
-        The SAM data (e.g. flows) as a DataFrame. Rows and columns should
-        match the indices (for goods, factors, etc.) used in the SAM.
-    scale_factor : float, optional
-        Factor to rescale model values to match SAM values (default is 1.0).
-    
-    Returns
-    -------
-    pd.DataFrame
-        A DataFrame showing, for each flow, the SAM value, the model value,
-        the difference, and the percentage difference.
     """
     comparison = []
 
-    # --- Compare intermediate input flows: X[i,j] ---
+    # Compare intermediate input flows: X[i,j]
     for i in instance.i:
         for j in instance.i:
             model_val = (instance.X[i, j].value or 0.0) / scale_factor
-            sam_val = sam_df.loc[i, j] if (i in sam_df.index and j in sam_df.columns) else 0.0
-            diff    = model_val - sam_val
-            pct     = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
-            comparison.append({
-                'Flow': 'X',
-                'From': i,
-                'To': j,
-                'SAM': sam_val,
-                'Model': model_val,
-                'Diff': diff,
-                'PctDiff': pct
-            })
+            sam_val = (
+                sam_df.loc[i, j] if (i in sam_df.index and j in sam_df.columns) else 0.0
+            )
+            diff = model_val - sam_val
+            pct = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
+            comparison.append(
+                {
+                    "Flow": "X",
+                    "From": i,
+                    "To": j,
+                    "SAM": sam_val,
+                    "Model": model_val,
+                    "Diff": diff,
+                    "PctDiff": pct,
+                }
+            )
 
-    # --- Compare factor usage: F[h,i] ---
+    # Compare factor usage: F[h,i]
     for h in instance.h:
         for i in instance.i:
             model_val = (instance.F[h, i].value or 0.0) / scale_factor
-            sam_val = sam_df.loc[h, i] if (h in sam_df.index and i in sam_df.columns) else 0.0
-            diff    = model_val - sam_val
-            pct     = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
-            comparison.append({
-                'Flow': 'F',
-                'From': h,
-                'To': i,
-                'SAM': sam_val,
-                'Model': model_val,
-                'Diff': diff,
-                'PctDiff': pct
-            })
+            sam_val = (
+                sam_df.loc[h, i] if (h in sam_df.index and i in sam_df.columns) else 0.0
+            )
+            diff = model_val - sam_val
+            pct = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
+            comparison.append(
+                {
+                    "Flow": "F",
+                    "From": h,
+                    "To": i,
+                    "SAM": sam_val,
+                    "Model": model_val,
+                    "Diff": diff,
+                    "PctDiff": pct,
+                }
+            )
 
-    # --- Compare Household Consumption: Xp[i] ---
+    # Compare Household Consumption: Xp[i]
     for i in instance.i:
         model_val = (instance.Xp[i].value or 0.0) / scale_factor
-        sam_val = sam_df.loc[i, 'HOH'] if (i in sam_df.index and 'HOH' in sam_df.columns) else 0.0
-        diff    = model_val - sam_val
-        pct     = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
-        comparison.append({
-            'Flow': 'Xp',
-            'From': i,
-            'To': 'HOH',
-            'SAM': sam_val,
-            'Model': model_val,
-            'Diff': diff,
-            'PctDiff': pct
-        })
+        sam_val = (
+            sam_df.loc[i, "HOH"]
+            if (i in sam_df.index and "HOH" in sam_df.columns)
+            else 0.0
+        )
+        diff = model_val - sam_val
+        pct = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
+        comparison.append(
+            {
+                "Flow": "Xp",
+                "From": i,
+                "To": "HOH",
+                "SAM": sam_val,
+                "Model": model_val,
+                "Diff": diff,
+                "PctDiff": pct,
+            }
+        )
 
-    # --- Compare Government Consumption: Xg[i] ---
+    # Compare Government Consumption: Xg[i]
     for i in instance.i:
         model_val = (instance.Xg[i].value or 0.0) / scale_factor
-        sam_val = sam_df.loc[i, 'GOV'] if (i in sam_df.index and 'GOV' in sam_df.columns) else 0.0
-        diff    = model_val - sam_val
-        pct     = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
-        comparison.append({
-            'Flow': 'Xg',
-            'From': i,
-            'To': 'GOV',
-            'SAM': sam_val,
-            'Model': model_val,
-            'Diff': diff,
-            'PctDiff': pct
-        })
+        sam_val = (
+            sam_df.loc[i, "GOV"]
+            if (i in sam_df.index and "GOV" in sam_df.columns)
+            else 0.0
+        )
+        diff = model_val - sam_val
+        pct = 100 * diff / sam_val if abs(sam_val) > 1e-12 else None
+        comparison.append(
+            {
+                "Flow": "Xg",
+                "From": i,
+                "To": "GOV",
+                "SAM": sam_val,
+                "Model": model_val,
+                "Diff": diff,
+                "PctDiff": pct,
+            }
+        )
 
-    # You can extend with additional flows (e.g., Investment Xv, Exports E, Imports M, etc.)
+    # To be extended with otjer flows
 
     return pd.DataFrame(comparison)
 
+
 def print_comparison_table(df_comp):
-    """
-    Print the comparison DataFrame in a neatly aligned text table.
-    
-    Parameters
-    ----------
-    df_comp : pandas.DataFrame
-        The DataFrame created by compare_solution_vs_sam.
-    """
+
     # Reorder columns (if desired)
-    df_comp = df_comp[['Flow', 'From', 'To', 'SAM', 'Model', 'Diff', 'PctDiff']]
+    df_comp = df_comp[["Flow", "From", "To", "SAM", "Model", "Diff", "PctDiff"]]
 
     # Round numeric columns for neatness
-    df_comp['SAM'] = df_comp['SAM'].round(4)
-    df_comp['Model'] = df_comp['Model'].round(4)
-    df_comp['Diff'] = df_comp['Diff'].round(4)
-    df_comp['PctDiff'] = df_comp['PctDiff'].round(2)
+    df_comp["SAM"] = df_comp["SAM"].round(4)
+    df_comp["Model"] = df_comp["Model"].round(4)
+    df_comp["Diff"] = df_comp["Diff"].round(4)
+    df_comp["PctDiff"] = df_comp["PctDiff"].round(2)
 
     # Print the table
     logger.info(df_comp.to_string(index=False))
 
 
 def run_cge_example(sam_type="japan", display_results=True):
-    """
-    Run a CGE model example with the specified SAM data.
-    
-    Parameters:
-    -----------
-    sam_type : str
-        Type of SAM to use: "japan", "simple", or "us"
-    display_results : bool
-        Whether to display model results
-        
-    Returns:
-    --------
-    instance
-        The solved model instance
-    """
+
     # Initialize objects
     sam_manager = SAMDataManager(DATA_LOC / "sam_data")
     model_runner = CGEModelRunner()
-    
+
     # Load and prepare data
     sam_data = sam_manager.load_sam(sam_type)
     data_dir = sam_manager.prepare_sam_data(sam_data, output_name=f"{sam_type}_example")
     # Logger info data dir
     print("Data dir", data_dir)
-    
+
     # Run model
     instance = model_runner.run_model(data_dir)
-    
+
     # Display results if requested
     if display_results:
         instance.display()
-    
+
     return instance
 
 
@@ -415,7 +415,7 @@ def main():
     parser.add_argument(
         "sam_type",
         choices=["japan", "us", "simple"],
-        help="Which SAM to load and run: 'japan', 'us', or 'simple'."
+        help="Which SAM to load and run: 'japan', 'us', or 'simple'.",
     )
     args = parser.parse_args()
     sam_type = args.sam_type.lower()
@@ -427,7 +427,7 @@ def main():
     logger.info(f"Running CGE model with {sam_type.upper()} SAM...")
     instance = run_cge_example(sam_type=sam_type)
 
-    factor = 1 
+    factor = 1
 
     logger.info("\nValidating model solution against original SAM data:")
     df_comparison = compare_solution_vs_sam(instance, sam_df, scale_factor=factor)
@@ -436,10 +436,11 @@ def main():
     logger.info("\nKey Economic Indicators:")
     logger.info("-----------------------")
     gdp = sum(
-        instance.pf[h].value * sum(instance.F[h,i].value for i in instance.i)
+        instance.pf[h].value * sum(instance.F[h, i].value for i in instance.i)
         for h in instance.h
     )
     logger.info(f"GDP: {gdp:.4f}")
+
 
 if __name__ == "__main__":
     main()
