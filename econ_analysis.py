@@ -356,19 +356,19 @@ def main():
     logger.info("Generating Visualizations")
     plot_vuln_trafos(data['mean_vuln_all'], data['df_lines'])
     plot_econo_naics(io_results_df, model_type="io")
-    plot_econo_naics(cge_results_df, model_type="cge")
+    # plot_econo_naics(cge_results_df, model_type="cge")
     
     plot_socio_economic_impact(io_results_df, confidence_df, model_type="io")
-    plot_socio_economic_impact(cge_results_df, confidence_df, model_type="cge")
+    # plot_socio_economic_impact(cge_results_df, confidence_df, model_type="cge")
 
     logger.info("Saving Results")
     io_results_df.to_csv(FIGURES_DIR / "io_model_results.csv", index=False)
-    cge_results_df.to_csv(FIGURES_DIR / "cge_model_results.csv", index=False)
+    # cge_results_df.to_csv(FIGURES_DIR / "cge_model_results.csv", index=False)
     confidence_df.to_csv(FIGURES_DIR / "confidence_intervals.csv", index=False)
     
     return {
         'io_results': io_results_df,
-        'cge_results': cge_results_df,
+        # 'cge_results': cge_results_df,
         'confidence_intervals': confidence_df,
         'data': data
     }
