@@ -44,7 +44,7 @@ The pipeline follows a nine-stage process:
 3. **Statistical extremes** — fit return-period scaling/distributions for **B/E/V**
 4. **Grid network & admittance** — substation-line topology; transformer archetype assignment
 5. **Scenario synthesis** — Gannon event + 75/100/150/200/250-year extremes
-6. **GIC simulation** — Lehtinen-Pirjola via `est_gic.py`; thousands of Monte-Carlo transformer realizations
+6. **GIC simulation** — Lehtinen-Pirjola via `est_gic.py`; (2/3) thousand of Monte-Carlo transformer realizations
 7. **Post-processing** — effective/aggregated GIC metrics; bootstrap uncertainty
 8. **Export** — artifacts for economic/reliability modeling (not in this repo; see [`spwio`](https://github.com/denniesbor/spwio/))
 
