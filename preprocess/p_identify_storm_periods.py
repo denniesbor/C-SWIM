@@ -1,7 +1,12 @@
+"""
+Identify and analyze geomagnetic storm periods using Kp and DST indices.
+Authors: Dennies and Ed
+"""
+
 import os
 import pandas as pd
 import requests
-from pathlib import Path
+
 from datetime import timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -9,11 +14,9 @@ from matplotlib.gridspec import GridSpec
 
 from configs import setup_logger, get_data_dir
 
-# Get data data log and configure logger
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/identify_storms.log")
 
-# Set up working directories
 data_loc = DATA_LOC
 kp_dst_path = data_loc / "kp_ap_indices"
 kp_dst_path.mkdir(parents=True, exist_ok=True)
@@ -22,7 +25,7 @@ logger.info(f"Working directory: {data_loc}")
 
 
 def download_file(url, file_path):
-    """Download a file from a given URL and save it to the specified path."""
+    """Download file from URL with error handling."""
     response = requests.get(url)
     response.raise_for_status()
     with file_path.open("wb") as f:
@@ -31,25 +34,8 @@ def download_file(url, file_path):
 
 
 def parse_combined_kp_ap_file(file_path):
-    """
-    Parses a combined Kp and Ap index data file into a pandas DataFrame.
+    """Parse combined Kp and Ap index data file into DataFrame."""
 
-    The input file is expected to be space-separated and contain columns corresponding
-    to year, month, day, hour, fractional hour, two decimal date values, Kp and Ap indices,
-    and a flag. The function reads this file and processes the data by adding:
-    - A derived "Kp_0to9" column, where the Kp index is scaled to an integer range of 0 to 9.
-    - A "Datetime" column created from the year, month, day, and hour columns.
-
-    Parameters:
-    file_path (str): Path to the input file containing Kp and Ap index data.
-
-    Returns:
-    pd.DataFrame: A DataFrame containing the parsed data with the following columns:
-        - Year, Month, Day, Hour, FracHour, DecimalDate1, DecimalDate2, Kp, Ap, Flag
-        - Kp_0to9: The Kp index scaled to an integer range of 0-9.
-        - Datetime: A datetime representation of the timestamp.
-
-    """
     columns = [
         "Year",
         "Month",
@@ -80,6 +66,7 @@ def analyze_kp_ap_data(df):
 
 
 def parse_dst_file(file_path):
+    """Parse DST data file into DataFrame."""
     with open(file_path, "r") as file:
         lines = file.readlines()
 
@@ -97,6 +84,7 @@ def parse_dst_file(file_path):
 
 
 def process_dst_data(df):
+    """Clean and prepare DST DataFrame with datetime index."""
     df["Datetime"] = pd.to_datetime(df["Datetime"])
     df["DOY"] = df["DOY"].astype(int)
     df["DST"] = df["DST"].astype(float)
@@ -105,37 +93,19 @@ def process_dst_data(df):
     return df
 
 
-# Identify storm periods
 def identify_storms(
     dst_df, df_kp, dst_threshold=-150, kp_threshold=8, time_delta_days=1
 ):
-    """
-    Identify storm periods from 1980 to 2024 using Kyoto DST and Postdam GFZ Dst values.
+    """Identify storm periods by combining DST and Kp thresholds."""
 
-    Parameters:
-    - dst_df (DataFrame): DataFrame containing Kyoto DST values.
-    - df_kp (DataFrame): DataFrame containing Postdam GFZ Dst values.
-    - dst_threshold (float, optional): Threshold value for Kyoto DST. Defaults to -150 nt.
-    - kp_threshold (float, optional): Threshold value for Postdam GFZ Dst. Defaults to 8.
-    - time_delta_days (int, optional): Number of days to consider for storm duration. Defaults to 1.
-
-    Returns:
-    - storm_df (DataFrame): DataFrame containing storm information, including start, end, and duration of each storm period.
-    """
-    # Function code here
-    ...
-    # Ensure datetime index
     dst_df = dst_df.set_index(pd.to_datetime(dst_df.index))
     df_kp = df_kp.set_index(pd.to_datetime(df_kp.index))
 
-    # Identify potential storm periods
     dst_storms = dst_df[dst_df["DST"] <= dst_threshold].index
     kp_storms = df_kp[df_kp["Kp"] >= kp_threshold].index
 
-    # Combine storm timestamps
     all_storm_times = sorted(set(dst_storms) | set(kp_storms))
 
-    # Initialize storm tracking
     storm_periods = []
     current_storm_start = None
     current_storm_end = None
@@ -171,18 +141,15 @@ def identify_storms(
         extended_end = end + timedelta(days=time_delta_days)
         extended_storm_periods.append((extended_start, extended_end))
 
-    # Create a DataFrame with storm information
     storm_df = pd.DataFrame(extended_storm_periods, columns=["Start", "End"])
     storm_df["Duration"] = storm_df["End"] - storm_df["Start"]
 
     return storm_df
 
 
-# Visualize storm periods
 def visualize_storm_periods(dst_df, kp_df):
-    """The function to visualize storm periods using DST and Kp indices."""
+    """Create visualization of DST and Kp indices with storm thresholds."""
 
-    # Create the figure and GridSpec
     fig = plt.figure(figsize=(12, 10))
     gs = GridSpec(2, 1, height_ratios=[1, 1], hspace=0.1)
 
@@ -232,13 +199,11 @@ def visualize_storm_periods(dst_df, kp_df):
         kp_df.index.max(), 5, "G1 Storm", va="bottom", ha="right", color="r", alpha=0.7
     )
 
-    # Adjust layout and save
     plt.tight_layout()
     fig.savefig(kp_dst_path / "storm_periods.png", bbox_inches="tight", dpi=150)
 
 
 def main():
-    # Download and process KP data
     kp_url = "https://kp.gfz-potsdam.de/kpdata?startdate=1980-01-01&enddate=2024-09-16&format=kp2#kpdatadownload-143"
     kp_file_path = kp_dst_path / "kpdata.txt"
     download_file(kp_url, kp_file_path)
@@ -247,53 +212,40 @@ def main():
     analyze_kp_ap_data(kp_df)
     logger.info("\nKP Analysis complete. Check the current directory for output plots.")
 
-    # The DST data has been downloaded and manually saved to a file named 'dst_data.txt'.
-    # The data is downloaded from Kyoto World Data Center for Geomagnetism.
-    # Couldn't script the download as the server restricts to 25 years of data.
-    # Had to partially download the files and merge them manually as .txt
+    # DST data manually downloaded from Kyoto World Data Center for Geomagnetism
+    # Server restricts to 25 years per request, so files were merged manually
     dst_file_path = kp_dst_path / "dst_data.txt"
     dst_df = parse_dst_file(dst_file_path)
     dst_df = process_dst_data(dst_df)
 
-    # Set Datetime as index for KP data
     kp_df.set_index("Datetime", inplace=True)
 
     logger.info("\nData processing complete.")
     logger.info(f"KP data shape: {kp_df.shape}")
     logger.info(f"DST data shape: {dst_df.shape}")
 
-    # You can add further analysis or plotting here
     storm_df = identify_storms(dst_df, kp_df)
 
-    # Export this data for use in later stages
-    # Save storm whose datetime is 1985 >
+    # Save storms from 1985 onwards
     storm_df = storm_df[storm_df["Start"] > pd.to_datetime("1985-01-01")]
     storm_df.to_csv((kp_dst_path / "storm_periods.csv"), index=False)
 
-    # Visualize the storm periods
     visualize_storm_periods(dst_df, kp_df)
 
-    # Following the method of Greg Lucas to identify storms
-    # Download and process KP data
+    # Greg Lucas method for storm identification
     kp_url = "https://kp.gfz-potsdam.de/kpdata?startdate=1980-01-01&enddate=2024-09-16&format=kp2#kpdatadownload-143"
     kp_file_path = kp_dst_path / "kpdata.txt"
     if not os.path.exists(kp_file_path):
         download_file(kp_url, kp_file_path)
 
-    # Parse out the kp file
     kp_df = parse_combined_kp_ap_file(kp_file_path)
     analyze_kp_ap_data(kp_df)
     logger.info("\nKP Analysis complete. Check the current directory for output plots.")
 
-    # The DST data has been downloaded and manually saved to a file named 'dst_data.txt'.
-    # The data is downloaded from Kyoto World Data Center for Geomagnetism.
-    # The download cannot be scripted as the server restricts to 25 years of data.
-    # Had to partially download the files and merge them manually as .txt
     dst_file_path = kp_dst_path / "dst_data.txt"
     dst_df = parse_dst_file(dst_file_path)
     dst_df = process_dst_data(dst_df)
 
-    # Set Datetime as index for KP data
     kp_df.set_index("Datetime", inplace=True)
 
     import datetime
@@ -306,23 +258,22 @@ def main():
 
     list_of_times = []
 
-    # for i in range(100):
+    # Identify DST storms (DST < -140)
     curr_dst = -1000
     while curr_dst < -140:
         dsts = storm_time_df[~storm_time_df["storm"]]["DST"]
         dst_min = dsts.idxmin()
         storm_time_df.loc[dst_min - delta_t : dst_min + delta_t, "storm"] = True
         curr_dst = storm_time_df.loc[dst_min, "DST"]
-        # logger.info(f"{dst_min}, {curr_dst}")
         list_of_times.append(dst_min)
 
+    # Identify Kp storms (Kp >= 8)
     curr_kp = 10
     while curr_kp >= 8:
         kp = storm_time_df[~storm_time_df["storm"]]["Kp"]
         kp_max = kp.idxmax()
         storm_time_df.loc[kp_max - delta_t : kp_max + delta_t, "storm"] = True
         curr_kp = storm_time_df.loc[kp_max, "Kp"]
-        # logger.info(f"{dst_min}, {curr_dst}")
         list_of_times.append(kp_max)
 
     logger.info(f"Initial number of storms: {len(list_of_times)}")

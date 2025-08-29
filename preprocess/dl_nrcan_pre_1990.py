@@ -1,31 +1,24 @@
-# --------------------------------------------------------------------------------
-# This script downloads geomagnetic data from the Canadian National Geomagnetic
-# Network (C2) for a given storm period. The data is downloaded for a set of
-# observatories and saved to a CSV file.
-# Some of the requests may fail due to network issues or other reasons. So rerun this
-# script if some of the data is missing. Please validate the data before using it.
-# Author: Dennies Bor - GMU
-# --------------------------------------------------------------------------------
+"""
+Canadian National Geomagnetic Network (C2) data downloader for storm periods.
+Some requests may fail due to network issues - rerun if data is missing.
+Validate data before using.
+Authors: Dennies and Ed
+"""
 
 # %%
-import time
 import os
-from pathlib import Path
-import tempfile
+import time
+
 import obspy
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
 from obspy.clients.fdsn import Client
 from obspy import UTCDateTime
+import pandas as pd
 
 from configs import setup_logger, get_data_dir
 
-# Get data data log and configure logger
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/d_nrcan_mag.log")
 
-# Load the storm data
 data_dir = DATA_LOC
 storm_data_loc = data_dir / "kp_ap_indices" / "storm_periods.csv"
 
@@ -36,6 +29,7 @@ geomag_folder = data_dir / "geomag_data"
 
 nrcan_obs = ["blc", "cbb", "fcc", "mea", "ott", "res", "stj", "vic", "ykc"]
 
+# Observatory coordinates (longitude converted from 0-360 to -180-180)
 nrcan_loc = {
     "ALE": {"latitude": 82.497, "longitude": 297.647},
     "BLC": {"latitude": 64.318, "longitude": 263.988},
@@ -58,31 +52,12 @@ nrcan_loc = {
     "YKC": {"latitude": 62.480, "longitude": 245.518},
 }
 
-# %%
-def download_nrcan_geomag_data(network, station, location, channel, starttime, 
-    endtime, max_retries=3):
-    """
-    Downloads geomagnetic data from the NRCan (Natural Resources Canada) website.
-    Parameters:
-    - network (str): The network code.
-    - station (str): The station code.
-    - location (str): The location code.
-    - channel (str): The channel code.
-    - starttime (str): The start time of the data in UTC format.
-    - endtime (str): The end time of the data in UTC format.
-    - max_retries (int): The maximum number of retries in case of download failure. Default is 3.
-    Returns:
-    - df (pandas.DataFrame): The downloaded data as a pandas DataFrame with the following columns:
-        - Timestamp: The timestamp of each data point.
-        - Channel: The data values for the specified channel.
-    Note:
-    - This function requires the `Client` class from the `obspy.clients.earthquakescanada` module.
-    - The data is downloaded using the `get_waveforms` method of the `Client` class.
-    - The downloaded data is processed and returned as a pandas DataFrame.
-    - If the download fails, the function will retry up to `max_retries` times with an exponential backoff.
-    - If the download still fails after `max_retries` attempts, None is returned.
 
-    """
+# %%
+def download_nrcan_geomag_data(
+    network, station, location, channel, starttime, endtime, max_retries=3
+):
+    """Download geomagnetic data from NRCan with retry logic."""
     client = Client("https://www.earthquakescanada.nrcan.gc.ca")
     start = UTCDateTime(starttime)
     end = UTCDateTime(endtime)
@@ -127,9 +102,10 @@ def download_nrcan_geomag_data(network, station, location, channel, starttime,
     return None
 
 
-# Download and process data for a single station
-def download_and_process_nrcan_station(network, station, location, channels, 
-    start_time, end_time, nrcan_loc):
+def download_and_process_nrcan_station(
+    network, station, location, channels, start_time, end_time, nrcan_loc
+):
+    """Download and combine all channels for a single station."""
     station_data = []
     for channel in channels:
         data = download_nrcan_geomag_data(
@@ -179,6 +155,7 @@ def process_nrcan_stations(stations, start_time, end_time, nrcan_loc):
 
 # %%
 def process_and_save_data(observatory_name, data, start_time, base_dir=geomag_folder):
+    """Save processed data to CSV with year/observatory directory structure."""
     start_date = pd.to_datetime(start_time)
     year = start_date.year
     month = start_date.month
@@ -196,13 +173,13 @@ def process_and_save_data(observatory_name, data, start_time, base_dir=geomag_fo
 
 
 def process_storm_period(row, nrcan_obs, nrcan_loc):
+    """Process all stations for a single storm period."""
     start_time = row["Start"].strftime("%Y-%m-%dT%H:%M:%S")
     end_time = row["End"].strftime("%Y-%m-%dT%H:%M:%S")
     logger.info(f"Processing storm period: {start_time} to {end_time}")
 
     storm_data = {}
 
-    # Process NRCAN data
     nrcan_stations = [station.upper() for station in nrcan_obs]
     nrcan_storm_data = process_nrcan_stations(
         nrcan_stations, start_time, end_time, nrcan_loc
@@ -217,6 +194,7 @@ def process_storm_period(row, nrcan_obs, nrcan_loc):
 
 # %%
 def process_all_storms(storm_df, nrcan_obs, nrcan_loc):
+    """Process all storm periods between 1985-1991."""
     all_storm_data = {}
 
     # Index from 1985 to 1991 start

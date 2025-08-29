@@ -1,24 +1,18 @@
-"""
-US Substations Download Script - Vectorized Version
-
-Authors:
-- Dennies Bor
-- Ed Oughton
-
-Date:
-- February 2025
+"""Download and process US substation data.
+Authors: Dennies Bor and E. Oughton
 """
 
 import os
 import time
 import re
 import requests
+import warnings
+
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from shapely.geometry import Point, LineString, Polygon
-import warnings
+
 
 from configs import setup_logger, get_data_dir
 
@@ -32,7 +26,7 @@ os.makedirs(data_path, exist_ok=True)
 
 
 def download_substations_full():
-    """Try to download entire US at once."""
+    """Download all US substations in one request."""
     logger.info("Attempting to download entire US at once...")
 
     overpass_url = "http://overpass-api.de/api/interpreter"
@@ -77,7 +71,7 @@ def download_substations_full():
 
 
 def download_substations_regions():
-    """Download US by regions ensuring complete CONUS coverage."""
+    """Download US substations by region."""
     logger.info("Downloading US substations by regions...")
 
     # Regions with overlap to ensure complete CONUS coverage
@@ -136,7 +130,7 @@ def download_substations_regions():
 
 
 def convert_to_geodataframe(overpass_data):
-    """Convert Overpass API response to GeoDataFrame with only essential columns."""
+    """Convert Overpass API response to GeoDataFrame."""
     if not overpass_data.get("elements"):
         return gpd.GeoDataFrame()
 
@@ -204,13 +198,12 @@ def convert_to_geodataframe(overpass_data):
 
 
 def process_substations(gdf):
-    """Clean data and convert all geometries to points with vectorized operations."""
+    """Clean and convert geometries to points."""
     # Remove duplicates based on osmid
     initial_count = len(gdf)
     gdf = gdf[~gdf.index.duplicated(keep="first")]
     logger.info(f"Removed {initial_count - len(gdf)} duplicates")
 
-    # Store original geometry type
     gdf["original_geom_type"] = gdf.geometry.geom_type
 
     # Vectorized geometry conversion to points
@@ -219,7 +212,6 @@ def process_substations(gdf):
         lambda geom: geom.representative_point()
     )
 
-    # Vectorized voltage processing
     if "voltage" in gdf.columns:
         # Create a copy for processing
         voltage_series = gdf["voltage"].copy()
@@ -307,7 +299,7 @@ def process_substations(gdf):
 
 
 def download_region(bbox, timeout=300):
-    """Download substations for a specific region with optimized processing."""
+    """Download substations for a region."""
     overpass_url = "http://overpass-api.de/api/interpreter"
     min_lat, min_lon, max_lat, max_lon = bbox
 

@@ -1,35 +1,27 @@
 """
-Script to calculate return period values for the geomagnetic 
-field (e.g., 1-in-100-year). A lognormal distribution is 
-fitted to the maxes of B, E, and V. 
-
-Credit to Lucas at el. 2018.
-
-Make sure you have first run the preprocessing scripts. 
+Compute return-period estimates for geomagnetic fields (B, E, V) using lognormal fits to storm maxima.
 
 Authors:
 - Dennies Bor
 - Ed Oughton
 
-Date:
-- February 2025
 """
 
 import os
-import pickle
 import time
-from datetime import datetime, timedelta
-from multiprocessing import cpu_count
-from functools import partial
+import pickle
 import warnings
+from functools import partial
+from multiprocessing import cpu_count
+from datetime import datetime, timedelta
 
-from tqdm import tqdm
 import h5py
-import pandas as pd
-import geopandas as gpd
-import numpy as np
-import scipy.special
 import powerlaw
+import scipy.special
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import geopandas as gpd
 
 
 from configs import setup_logger, get_data_dir
@@ -68,10 +60,7 @@ def extract_max_values(maxB_arr, maxE_arr, maxV_arr, indices):
 
 
 def lognormal_ppf(y, mu, sigma, xmin):
-    """
-    Fit a powerlaw and lognormal distribution to the maxes of B, E, and V.
-    Adapted from the original Lucas et al. 2018 paper.
-    """
+    """Return the lognormal percent-point function adjusted by xmin."""
     erf = scipy.special.erf
     erfinv = scipy.special.erfinv
     Q = erf((np.log(xmin) - mu) / (np.sqrt(2) * sigma))
@@ -81,52 +70,35 @@ def lognormal_ppf(y, mu, sigma, xmin):
 
 
 def fit_data(data):
-    """
-
-    """
-    # Extract the sign of the data (-1 for negative, 1 for positive)
+    """Fit a lognormal model to |data| and store sign for back-transformation."""
     sign_vector = np.sign(np.mean(np.nan_to_num(data, nan=0)))
-
-    # Fit lognormal to absolute values of the data
     abs_data = np.abs(data)
-    
     with np.errstate(all="ignore"), warnings.catch_warnings():
         warnings.simplefilter("ignore")
         fit = powerlaw.Fit(abs_data, xmin=np.min(abs_data), verbose=False)
-
     fitting_func = fit.lognormal
     if np.any(np.isnan(fitting_func.cdf())):
         warnings.warn("No lognormal fit (changing to positive)")
         fitting_func = fit.lognormal_positive
-    
-    # Store the sign vector for back-transformation
     fitting_func.sign_vector = sign_vector
-
     return fitting_func
 
 
 def calc_return_period(fitting_func, return_period, nyears):
-    """Calculate return period"""
+    """Calculate return-period value from a fitted lognormal model."""
     ndata = len(fitting_func.parent_Fit.data)
     if ndata == 0:
         return np.nan
-
     x_return = 1 - (1 / return_period) * nyears / ndata
-    y_return = lognormal_ppf(1 - x_return, fitting_func.mu, fitting_func.sigma, xmin=fitting_func.xmin)
-
-    # Reapply the original sign
-    if hasattr(fitting_func, 'sign_vector'):
-        sign_vector = fitting_func.sign_vector
-        y_return *= sign_vector
-    
-    # Get rid of inf's
+    y_return = lognormal_ppf(
+        1 - x_return, fitting_func.mu, fitting_func.sigma, xmin=fitting_func.xmin
+    )
+    if hasattr(fitting_func, "sign_vector"):
+        y_return *= fitting_func.sign_vector
     if not np.all(np.isfinite(y_return)):
         return 0.0
-    
-    # Make nans zero
     if np.isnan(y_return):
         y_return = 0.0
-
     return y_return
 
 
@@ -156,7 +128,7 @@ def process_site(site_data, n_samples, n_years, return_periods, quantity):
     # Generate all samples at once
     sampled_data = np.random.choice(site_data, (max_attempts, n_years), replace=True)
 
-    # Normalize data if necessary
+    # Normalize data
     if quantity not in ["B", "V"]:
         sampled_data /= 1000.0
 
@@ -167,7 +139,9 @@ def process_site(site_data, n_samples, n_years, return_periods, quantity):
         if valid_samples >= n_samples:
             break
 
-        sample_results = safe_fit_and_calc(sampled_data[attempt], return_periods, n_years)
+        sample_results = safe_fit_and_calc(
+            sampled_data[attempt], return_periods, n_years
+        )
 
         if sample_results:
             for period in return_periods:
@@ -177,24 +151,37 @@ def process_site(site_data, n_samples, n_years, return_periods, quantity):
     return results
 
 
-def bootstrap_analysis(maxB_arr, n_samples=100, n_years=39, return_periods=None, quantity="B"):
+def bootstrap_analysis(
+    maxB_arr, n_samples=100, n_years=39, return_periods=None, quantity="B"
+):
     """Runs process_site in parallel while avoiding nested multiprocessing issues."""
-    
+
     n_sites = maxB_arr.shape[0]
-    
+
     process_site_partial = partial(
-        process_site, n_samples=n_samples, n_years=n_years, return_periods=return_periods, quantity=quantity
+        process_site,
+        n_samples=n_samples,
+        n_years=n_years,
+        return_periods=return_periods,
+        quantity=quantity,
     )
     from multiprocessing import get_context
+
     # Use "spawn" context to avoid issues on Windows
     with get_context("spawn").Pool(processes=cpu_count()) as pool:
         results_list = list(
-            tqdm(pool.imap(process_site_partial, maxB_arr), total=n_sites, desc="Processing sites")
+            tqdm(
+                pool.imap(process_site_partial, maxB_arr),
+                total=n_sites,
+                desc="Processing sites",
+            )
         )
 
     # Convert results to a structured dictionary
-    results = {period: np.array([site_result[period] for site_result in results_list])
-        for period in return_periods}
+    results = {
+        period: np.array([site_result[period] for site_result in results_list])
+        for period in return_periods
+    }
 
     return results
 
@@ -221,7 +208,9 @@ def confidence_limits(results, return_periods):
         for period in return_periods:
             lower, median, upper = confidence_intervals[period]
             if not np.isnan(median[i]):
-                logger.info(f"---{period}-year event: {median[i]:.2f} ({lower[i]:.2f} - {upper[i]:.2f})")
+                logger.info(
+                    f"---{period}-year event: {median[i]:.2f} ({lower[i]:.2f} - {upper[i]:.2f})"
+                )
             else:
                 logger.error(f"---{period}-year event: No valid data")
 
@@ -244,25 +233,27 @@ def calculate_confidence_intervals(results):
 
 
 def load_or_calculate_results(file_path, max_arr, quantity):
-    """Load or calculate results for Magnetic, Electric, and Induced Voltage fields"""
+    """Load results from disk or compute them and persist."""
     if os.path.exists(file_path):
         with open(file_path, "rb") as pkl:
-            return pickle.load(pkl)  # Works best with NumPy arrays
+            return pickle.load(pkl)
     else:
-        results = bootstrap_analysis(max_arr, n_samples, n_years, return_periods, quantity=quantity)
+        results = bootstrap_analysis(
+            max_arr, n_samples, n_years, return_periods, quantity=quantity
+        )
         with open(file_path, "wb") as pkl:
             pickle.dump(results, pkl, protocol=pickle.HIGHEST_PROTOCOL)
             return results
 
 
 def extract_confidence_medians(results, return_periods):
-    """Calculate statistical predictions for examined return periods"""
+    """Return median estimates for the specified return periods."""
     ci = calculate_confidence_intervals(results)
     return {year: ci[year][1] for year in return_periods}
 
 
 def flatten_max_values(max_arr, indices):
-    """Flatten arrays for storm events: Halloween, Gannon, and St. Patrick's Day"""
+    """Flatten per-site maxima for the given storm indices."""
     return max_arr[:, indices].flatten()
 
 
@@ -296,9 +287,11 @@ if __name__ == "__main__":
     storm_df = pd.read_csv(storm_data_loc)
     storm_df["Start"] = pd.to_datetime(storm_df["Start"])
     storm_df["End"] = pd.to_datetime(storm_df["End"])
-    
+
     # # filter from 1985 to 2025
-    storm_df = storm_df[(storm_df["Start"] >= "1985-01-01") & (storm_df["End"] <= "2025-01-01")]
+    storm_df = storm_df[
+        (storm_df["Start"] >= "1985-01-01") & (storm_df["End"] <= "2025-01-01")
+    ]
 
     # Load the maxes as numpy arrays
     maxB_arr = np.load(storm_maxes_path / "maxB_arr_testing_2.npy")
@@ -318,20 +311,33 @@ if __name__ == "__main__":
     st_patricks_start = datetime(2015, 3, 17, 0)  # St. Patrick's Day storm 2015
     st_patricks_end = st_patricks_start + timedelta(days=1)  # 1 day duration
 
-    hydro_quebec_start = datetime(1989, 3, 13, 0)  # Hydro-Quebec storm 1989   
+    hydro_quebec_start = datetime(1989, 3, 13, 0)  # Hydro-Quebec storm 1989
     hydro_quebec_end = hydro_quebec_start + timedelta(days=1)  # 1 day duration
 
     halloween_idx = get_event_indices(storm_df, halloween_start, halloween_end)
     gannon_idx = get_event_indices(storm_df, gannon_start, gannon_end)
-    print("Gannon storm indices:", gannon_idx)
-    print("Halloween storm indices:", halloween_idx)
-    print("St. Patrick's storm indices:", st_patricks_start, st_patricks_end)
+
+    logger.info(f"Gannon storm indices: {gannon_idx}")
+    logger.info(f"Halloween storm indices: {halloween_idx}")
+    logger.info(f"St. Patrick's storm indices: {st_patricks_start}, {st_patricks_end}")
+
     st_patricks_idx = get_event_indices(storm_df, st_patricks_start, st_patricks_end)
 
-    maxB_halloween, maxE_halloween, maxV_halloween = extract_max_values(maxB_arr, maxE_arr, maxV_arr, halloween_idx)
-    maxB_gannon, maxE_gannon, maxV_gannon = extract_max_values(maxB_arr, maxE_arr, maxV_arr, gannon_idx)
-    maxB_st_patricks, maxE_st_patricks, maxV_st_patricks = extract_max_values(maxB_arr, maxE_arr, maxV_arr, st_patricks_idx)
-    maxB_hydro_quebec, maxE_hydro_quebec, maxV_hydro_quebec = extract_max_values(maxB_arr, maxE_arr, maxV_arr, get_event_indices(storm_df, hydro_quebec_start, hydro_quebec_end))
+    maxB_halloween, maxE_halloween, maxV_halloween = extract_max_values(
+        maxB_arr, maxE_arr, maxV_arr, halloween_idx
+    )
+    maxB_gannon, maxE_gannon, maxV_gannon = extract_max_values(
+        maxB_arr, maxE_arr, maxV_arr, gannon_idx
+    )
+    maxB_st_patricks, maxE_st_patricks, maxV_st_patricks = extract_max_values(
+        maxB_arr, maxE_arr, maxV_arr, st_patricks_idx
+    )
+    maxB_hydro_quebec, maxE_hydro_quebec, maxV_hydro_quebec = extract_max_values(
+        maxB_arr,
+        maxE_arr,
+        maxV_arr,
+        get_event_indices(storm_df, hydro_quebec_start, hydro_quebec_end),
+    )
 
     # Run the analysis
     n_samples = 100
@@ -351,7 +357,7 @@ if __name__ == "__main__":
     confidence_limits(results_E, return_periods)
     confidence_limits(results_V, return_periods)
 
-    results_B_ci = extract_confidence_medians(results_B,  return_periods)
+    results_B_ci = extract_confidence_medians(results_B, return_periods)
     results_E_ci = extract_confidence_medians(results_E, return_periods)
     results_V_ci = extract_confidence_medians(results_V, return_periods)
 
@@ -399,8 +405,10 @@ if __name__ == "__main__":
                 field_group.create_dataset(f"{year}_year", data=data)
 
         # Add metadata
-        f.attrs["description"] = ("Geomagnetic data including MT sites " +
-            "transmission lines, real storm events, and statistical predictions")
+        f.attrs["description"] = (
+            "Geomagnetic data including MT sites "
+            + "transmission lines, real storm events, and statistical predictions"
+        )
         f.attrs["date_created"] = np.bytes_(datetime.now().isoformat())
 
     end_time = time.time()

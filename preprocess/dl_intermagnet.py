@@ -1,21 +1,20 @@
-# ----------------------------------------------------------------------
-# Script to download geomagnetic data from the INTERMAGNET GIN from
-# identified storm periods between 1991 and 2024.
-#  To get the old data use download_nrcan_old.py, and download_usgs_old.py scripts
-# Author: Dennies Bor-GMU
-# ----------------------------------------------------------------------
+"""
+Download geomagnetic data from INTERMAGNET GIN for storm periods 1991-2024.
+For older data use download_nrcan_old.py and download_usgs_old.py scripts.
+Authors: Dennies and Ed
+"""
+
 import os
 import sys
-from pathlib import Path
 import shutil
 import re
 from urllib import request
 from urllib.error import URLError
-from contextlib import ExitStack
-import pandas as pd
 from datetime import datetime, timedelta
 import multiprocessing
 from functools import partial
+
+import pandas as pd
 
 from configs import setup_logger, get_data_dir
 
