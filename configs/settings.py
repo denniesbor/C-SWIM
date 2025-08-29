@@ -17,7 +17,7 @@ DEFAULT_DATA_DIR = Path("__file__").resolve().parent / "data"
 try:
     GROUND_GIC_DIR = Path("/data/archives/nfs/spw-geophy/data/gic/ground_gic")
     GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
-except FileNotFoundError:
+except (FileNotFoundError, PermissionError):
     GROUND_GIC_DIR = DEFAULT_DATA_DIR / "gic" / "ground_gic"
     GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 
