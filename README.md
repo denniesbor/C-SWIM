@@ -1,130 +1,264 @@
-# A Coupled Physics-Engineering-Economic Model for Power Grid Impact Assessment of Space Weather Hazards
+# A Coupled Physics–Engineering–Economic Pipeline for U.S. Power Grid Impact Assessment of Extreme Space Weather
+## Summary
 
-This documentation outlines the step-by-step process for running statistical analysis on geomagnetic 
-data, modeling the impacts on an Extra High Voltage power grid model, and capturing downstream socio-economic impacts.
-The focus here is applying this approach to the US. The figure below is a box diagram of the method.
+This repository provides a reproducible pipeline that (1) collects and preprocesses geomagnetic and grid datasets, (2) derives extreme geoelectric field scenarios statistically, (3) builds a geospatial/electrical admittance model of the extra-high voltage (EHV) grid, (4) simulates geomagnetically induced currents (GIC) under synthetic and historical storms, and (5) exports outputs for downstream socio-economic and reliability impact modeling (handled in the separate [`spwio`](https://github.com/denniesbor/spwio/) repository).
 
-#![Method Box](./figures/method-box.png)
+This work builds upon the foundational geoelectric hazard analysis framework developed by Lucas et al. (2020) for 100-year return period assessments of the U.S. high-voltage power grid.
 
-## Quick Start Dataset Setup
+**Related Publication:** Oughton, E. J., et al. (2024). A physics-engineering-economic model coupling approach for estimating the socio-economic impacts of space weather scenarios. *arXiv preprint* arXiv:2412.18032.
 
-1. Download data archive:
+---
 
-   ```bash
-   wget [https://zenodo.org/records/14231083/files/data_loc.tar.gz?download=1]/data_loc.tar.gz
-   ```
+## Quick Start
 
-2. Extract and rename:
+### Option A: Using Zenodo Data (Recommended)
 
-   ```bash
-   tar -xzf data_loc.tar.gz && mv data_loc data
-   ```
+Download the prepared data bundle to bypass lengthy data acquisition. Once you clone this repository, extract the data at the root level (same level as preprocess, scripts, etc.):
 
-3. Define required datasets:
-   ```
-   data/
-   ├── EMTF/
-   │   └── mt_pickle.pkl              # MT sites data
-   ├── kp_ap_indices/
-   │   └── storm_periods.csv          # Storm time data
-   ├── Electric__Power_Transmission_Lines/
-   │   └── trans_lines_pickle.pkl     # Transmission lines data
-   ├── econ_data/
-   │   └── winding_mean_df.csv        # Economic impact data (computed in the impact notebook)
-   ├── maxB_arr_testing_2.npy         # Maximum B values
-   ├── maxE_arr_testing_2.npy         # Maximum E values
-   ├── maxV_arr_testing_2.npy         # Maximum V values
-   ├── processed_geomag_data.nc       # Processed geomagnetic data
-   ├── grid_e_*.pkl                   # Grid and mask data for plotting
-   ├── nerc_gdf.geojson               # NERC regions data
-   ├── final_tl_data.pkl              # Final transmission line data
-   ├── line_coords.pkl                # Line coordinates
-   └── various auxiliary files        # & more supporting datasets
-   ```
+```bash
+# Download prepared data bundle
+wget -O data-tl-emtf-storms.tar.gz "https://zenodo.org/records/16994602/files/data-tl-emtf-storms.tar.gz?download=1"
 
-## Initial Setup
+# Extract data to root directory (same level as preprocess/, scripts/, etc.)
+tar -xzf data-tl-emtf-storms.tar.gz
+```
 
-Before beginning (if you wish to generate the datafiles by yourself), ensure all requirements are met by following the detailed setup instructions in `/data_routines/README.md`. This setup is crucial for proper data processing and analysis. Also, this workflow is designed to manage memory efficiently by processing data sequentially across multiple scripts.
+### Option B: Environment Setup
 
-## Detailed Workflow
+Create the conda environment and install dependencies:
 
-### 1. Calculate Storm Maximums
+```bash
+conda env create -f environment.yml
+conda activate spw-env
+pip install bezpy pysecs
+```
 
-Download the necessary data from zenodo at [Zenodo](https://zenodo.org/records/14231083/files/data_loc.tar.gz?download=1)
-**Script**: `calculate_storm_maxes.py`
+---
 
-This script calculates maximum values for three key parameters at magnetotelluric sites and transmission lines:
+## Pipeline Architecture
 
-- Magnetic field strength (B)
-- Electric field strength (E)
-- Voltage (V)
+The pipeline follows a nine-stage process:
 
-**Prerequisites**:
+1. **Data acquisition & preprocessing** — geomagnetic observatories, EMTF/MT transfer functions, storm identification, transmission grid & substations
+2. **Storm maxima extraction** — space-time windowing of **B**, derived **E**, and induced line voltages **V** at MT sites & along lines  
+3. **Statistical extremes** — fit return-period scaling/distributions for **B/E/V**
+4. **Grid network & admittance** — substation-line topology; transformer archetype assignment
+5. **Scenario synthesis** — Gannon event + 75/100/150/200/250-year extremes
+6. **GIC simulation** — Lehtinen-Pirjola via `est_gic.py`; thousands of Monte-Carlo transformer realizations
+7. **Post-processing** — effective/aggregated GIC metrics; bootstrap uncertainty
+8. **Export** — artifacts for economic/reliability modeling (not in this repo; see [`spwio`](https://github.com/denniesbor/spwio/))
 
-- Processed geomagnetic data files (`/preprocess/p_geomag_data.py`)
-- EMTF (Electromagnetic Transfer Function) files
-- Transmission lines dataset
-- Run `/preprocess/p_power_grid.py` first to generate the necessary transmission and substation files
+---
 
-**Output**:
+## Directory Structure
 
-- HDF5 file containing:
-  - Geoelectric field measurements
-  - Magnetic field measurements
-  - Voltage source data
+```
+├── preprocess/                  # Data acquisition and preprocessing
+│   ├── p_identify_storm_periods.py
+│   ├── dl_intermagnet.py
+│   ├── dl_usgs_pre_1990.py
+│   ├── dl_nrcan_pre_1990.py
+│   ├── p_geomag_data.py
+│   ├── dl_power_grid_update.py
+│   └── p_power_grid.py
+├── scripts/                     # Core analysis pipeline
+│   ├── calc_storm_maxes.py
+│   ├── stat_analysis.py
+│   ├── build_admittance_matrix.py
+│   └── est_gic.py
+├── post_process/                # Results aggregation
+│   ├── calc_eff_gic.py
+│   └── aggregate_gannon_gic.py
+├── data/                        # Data directory (created by pipeline)
+└── logs/                        # Execution logs
+```
 
-### 2. Statistical Analysis
+### Script Functions
 
-**Script**: `statistical_analysis.py`
+**Preprocessing:**
+- `p_identify_storm_periods.py` → writes `kp_ap_indices/storm_periods.csv` (Kp/Dst merged & filtered)
+- `dl_intermagnet.py` → downloads post-1990 observatory magnetic data (INTERMAGNET)
+- `dl_usgs_pre_1990.py`, `dl_nrcan_pre_1990.py` → pre-1990 USGS/NRCan magnetic data
+- `p_geomag_data.py` → harmonizes observatory + EMTF outputs → `processed_geomag_data.nc`
+- `dl_power_grid_update.py` → pulls OSM substations
+- `p_power_grid.py` → processes substations + transmission lines (filters ≥ `cut_off_volt`), geometry normalization
 
-This step focuses on generating extreme value statistics from the maximum values calculated in step 1:
+**Analysis:**
+- `calc_storm_maxes.py` → extracts B/E/V maxima for identified storm windows
+- `stat_analysis.py` → fits statistical/extreme-value models  
+- `build_admittance_matrix.py` → builds electrical admittance matrices & bus/substation mapping → `data/admittance_matrix/`
+- `est_gic.py` → Lehtinen-Pirjola GIC over Monte-Carlo transformer configs & scenarios
 
-- Applies power-law fitting to the maximum values
-- Analyzes statistical distributions
-- Generates probability models for extreme events
+**Post-processing:**
+- `calc_eff_gic.py` → Calculate effective GICs for downstream impact modeling
+- `aggregate_gannon_gic.py` → aggregates Gannon storm metrics for validation
 
-### 3. Build Admittance Matrix
+---
 
-**Script**: `build_admittance_matrix.py`
+## Execution
 
-Creates a comprehensive geospatial network model:
+### Recommended: Pipeline Orchestrators
 
-- Intersects transmission lines with substation data
-- Generates a connectivity network across the United States
-- Implements transformer assumptions as detailed in Case 1 methodology
-- Creates a detailed network topology for subsequent analysis
+#### 1. Preprocessing Wrapper: `preprocess_wrapper.py`
 
-### 4. GIC Estimation
+Handles storm identification, data downloads, and preprocessing in three phases:
 
-**Script**: `estimate_GIC.py`
+1. Storm identification → `p_identify_storm_periods.py`
+2. Downloads → `dl_intermagnet.py`, `dl_nrcan_pre_1990.py`, `dl_usgs_pre_1990.py`, `dl_power_grid_update.py`  
+3. Preprocessing → `p_geomag_data.py`, `p_power_grid.py` (only if required downloads succeed)
 
-Performs detailed Geomagnetically Induced Current (GIC) analysis:
+**CLI Options:**
+```bash
+--max-retries <INT>   # retry count for pre-1990 fetches (default 10)
+--sequential          # run tasks serially  
+--download-only       # only storm-ID (unless skipped) + downloads
+--preprocess-only     # assume downloads present; run preprocessing
+--skip-storm-id       # skip storm identification (storms already computed)
+```
 
-- Generates 2000 distinct scenarios for transformer network analysis
-- Implements the Lehtinen-Pirjola method to calculate:
-  - Nodal voltages
-  - GIC through transformer windings
-  - Ground node current flows
-- Uses Cholesky decomposition for sparse matrix solutions
-  - CUDA acceleration is recommended for optimal performance
-- Outputs individual CSV files for each analyzed substation transformer
+**Usage:**
+```bash
+python preprocess_wrapper.py                # full pipeline (parallel)
+python preprocess_wrapper.py --sequential   # deterministic serial run  
+python preprocess_wrapper.py --download-only
+python preprocess_wrapper.py --preprocess-only --skip-storm-id
+```
 
-### 5. Socioeconomic Impact Analysis
+#### 2. Scenario Modeling Wrapper: `run_scenarios.py`
 
-**Location**: `data/econ_data` notebook
+Targets `scripts/` (does not redo preprocessing).
 
-This final step analyzes the broader economic implications:
+**Sub-commands:**
+```bash  
+storm       -> calc_storm_maxes.py
+stat        -> stat_analysis.py
+admittance  -> build_admittance_matrix.py
+gic         -> est_gic.py
+all         -> storm -> stat -> gic
+```
 
-- Utilizes preprocessed data from:
-  - Bureau of Economic Analysis (BEA)
-  - Census Bureau
-  - Statistics of U.S. Business
-- Integrates GIC impact data with economic indicators
-- Available via [spwio]() repository
+**Optional Flag:**
+```bash
+--gannon-only   # passed through to est_gic.py
+```
 
-## Notes
+**Examples:**
+```bash
+python run_scenarios.py storm
+python run_scenarios.py stat  
+python run_scenarios.py admittance
+python run_scenarios.py gic --gannon-only
+python run_scenarios.py all
+```
 
-- Each script generates data that serves as input for subsequent scripts.
-- This sequential approach prevents memory saturation.
-- Ensure all prerequisite data is properly processed before running each step.
-- CUDA capability is required for efficient processing in step 4 (Will include default to CPU).
+### Manual Sequential Execution
+
+For step-by-step control, run scripts in order:
+
+```bash
+# 1. Storm identification
+python preprocess/p_identify_storm_periods.py
+
+# 2. Data downloads  
+python preprocess/dl_usgs_pre_1990.py
+python preprocess/dl_nrcan_pre_1990.py
+python preprocess/dl_intermagnet.py
+
+# 3. Data preprocessing
+python preprocess/p_geomag_data.py
+python preprocess/dl_power_grid_update.py  
+python preprocess/p_power_grid.py
+
+# 4. Analysis pipeline
+python scripts/calc_storm_maxes.py
+python scripts/stat_analysis.py
+python scripts/build_admittance_matrix.py
+python scripts/est_gic.py
+
+# 5. Post-processing
+python post_process/calc_eff_gic.py
+python post_process/aggregate_gannon_gic.py
+```
+
+---
+
+## Data Requirements
+
+### Geomagnetic Data Sources
+
+- **Kp/ap indices** — [GFZ Potsdam](https://kp.gfz.de/en/): [Geomagnetic Kp index](https://www.gfz.de/en/section/geomagnetism/data-products-services/geomagnetic-kp-index)
+- **Dst index** — [WDC for Geomagnetism, Kyoto](https://wdc.kugi.kyoto-u.ac.jp/dstdir/) (real-time: [DST realtime](https://wdc.kugi.kyoto-u.ac.jp/dst_realtime/))
+- **INTERMAGNET** observatory data: [INTERMAGNET.org](https://intermagnet.org/) ([download portal](https://intermagnet.org/data_download.html))
+- **USGS** geomagnetism: [USGS Geomagnetism Program](https://www.usgs.gov/programs/geomagnetism/data)  
+- **NRCan** geomagnetic data: [NRCan Geomagnetic Services](https://geomag.nrcan.gc.ca/data-donnee/sd-en.php)
+
+### Electromagnetic Transfer Functions
+
+- **EMTF/MT transfer functions** — [NSF SAGE/IRIS SPUD](https://ds.iris.edu/ds/products/emtf/): [SPUD EMTF Repository](https://ds.iris.edu/spud/emtf/)
+
+### Power Grid Infrastructure
+
+- **Transmission lines (U.S.)** — [HIFLD](https://hifld-geoplatform.hub.arcgis.com/datasets/geoplatform::transmission-lines-1/about) (as of updating this README file, inaccessible)
+- **Substations (OSM)** — [Overpass Turbo](https://overpass-turbo.eu/)
+
+
+## Related Repositories
+
+- **[`spwio`](https://github.com/denniesbor/spwio/)** — Socio-economic and reliability impact modeling using outputs from this pipeline
+
+---
+
+## Citation
+
+If you use this pipeline in your research, please cite:
+
+```bibtex
+@misc{oughton2024physics,
+  title={A physics-engineering-economic model coupling approach for estimating the socio-economic impacts of space weather scenarios}, 
+  author={Edward Oughton and others},
+  year={2024},
+  eprint={2412.18032},
+  archivePrefix={arXiv},
+  primaryClass={physics.geo-ph},
+  url={https://arxiv.org/abs/2412.18032}
+}
+```
+
+This work builds upon the foundational methodology from:
+
+```bibtex
+@article{lucas2020100year,
+  title={100-year Geoelectric Hazard Analysis for the U.S. High-Voltage Power Grid},
+  author={Lucas, G. M. and Love, J. J. and Kelbert, A. and Bedrosian, P. A. and Rigler, E. J.},
+  journal={Space Weather},
+  volume={18},
+  year={2020},
+  doi={10.1029/2019SW002329},
+  note={Code Author: Greg Lucas (greg.lucas@lasp.colorado.edu)}
+}
+```
+
+For the data products, please also cite:
+
+```bibtex
+@dataset{bor2025geomag,
+  author = {Bor, D.},
+  title = {Geomag data},
+  year = {2025},
+  publisher = {Zenodo},
+  doi = {10.5281/zenodo.16994602},
+  url = {https://doi.org/10.5281/zenodo.16994602}
+}
+```
+
+---
+
+## Acknowledgments
+
+This work builds upon data and services provided by: GFZ Potsdam; WDC Kyoto; INTERMAGNET; USGS; NRCan; EarthScope/IRIS EMTF/USArray; HIFLD; OpenStreetMap contributors.
+
+---
+
+## License
+
+[MIT License](LICENSE) — This repository provides research code and derived data products as-is. Downstream socio-economic and reliability modeling is handled in the separate [`spwio`](https://github.com/denniesbor/spwio/) repository.
