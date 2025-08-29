@@ -13,9 +13,13 @@ APP_NAME = "gic_analysis"
 DEFAULT_DATA_DIR = Path("__file__").resolve().parent / "data"
 
 # Ground gic Dir - specify a dir with enough space ~ 300 GB for 200 sim
-GROUND_GIC_DIR = Path("/data/archives/nfs/spw-geophy/data/gic/ground_gic")
-GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 
+try:
+    GROUND_GIC_DIR = Path("/data/archives/nfs/spw-geophy/data/gic/ground_gic")
+    GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
+except FileNotFoundError:
+    GROUND_GIC_DIR = DEFAULT_DATA_DIR / "gic" / "ground_gic"
+    GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_data_dir(subdir=None):
     """Get data directory path, creating if needed."""
