@@ -3,7 +3,10 @@ Author: Dennies Bor & Ed Oughton
 """
 
 import warnings
+import pickle
 
+import h5py
+import numpy as np
 import pandas as pd
 import xarray as xr
 import pyarrow as pa
@@ -23,6 +26,10 @@ from configs import (
 warnings.filterwarnings("ignore")
 DATA_LOC = get_data_dir()
 logger = setup_logger("Load preprocessed data")
+
+
+# Return periods for GIC calculations
+return_periods = np.arange(50, 251, 25)
 
 
 def load_and_aggregate_tiles():
@@ -164,6 +171,84 @@ def process_vulnerability_chunks(combined_vuln, chunk_size=50, max_realizations=
     return pd.DataFrame(results)
 
 
+def read_pickle(file_path):
+    """Read data from a pickle file."""
+    with open(file_path, "rb") as f:
+        return pickle.load(f)
+
+
+def load_and_process_gic_data(df_lines):
+    """Load and process geomagnetically induced current (GIC) data from HDF5 files."""
+
+    results_path = (
+        DENNIES_DATA_LOC / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
+    )
+
+    logger.info("Loading and processing GIC data...")
+
+    with h5py.File(DATA_LOC / results_path, "r") as f:
+
+        logger.info("Reading geomagnetic data from geomagnetic_data.h5")
+        mt_names = f["sites/mt_sites/names"][:]
+        mt_coords = f["sites/mt_sites/coordinates"][:]
+
+        line_ids = f["sites/transmission_lines/line_ids"][:]
+        line_ids_str = [
+            id.decode("utf-8") if isinstance(id, bytes) else str(id) for id in line_ids
+        ]
+
+        halloween_e = f["events/halloween/E"][:] / 1000
+        halloween_b = f["events/halloween/B"][:]
+        halloween_v = f["events/halloween/V"][:]
+
+        st_patricks_e = f["events/st_patricks/E"][:] / 1000
+        st_patricks_b = f["events/st_patricks/B"][:]
+        st_patricks_v = f["events/st_patricks/V"][:]
+
+        gannon_e = f["events/gannon/E"][:] / 1000
+        gannon_b = f["events/gannon/B"][:]
+        gannon_v = f["events/gannon/V"][:]
+
+        e_fields, b_fields, v_fields = {}, {}, {}
+
+        for period in return_periods:
+            e_fields[period] = f[f"predictions/E/{period}_year"][:]
+            b_fields[period] = f[f"predictions/B/{period}_year"][:]
+            v_fields[period] = f[f"predictions/V/{period}_year"][:]
+
+    v_cols = ["V_halloween", "V_st_patricks", "V_gannon"] + [
+        f"V_{period}" for period in return_periods
+    ]
+
+    id_to_index = {id: i for i, id in enumerate(line_ids_str)}
+    indices = np.array([id_to_index.get(name, -1) for name in df_lines["name"]])
+    mask = indices != -1
+
+    logger.info(f"Mask coverage: {mask.sum()}/{len(mask)}")
+
+    df_lines.loc[mask, "V_halloween"] = halloween_v[indices[mask]]
+    df_lines.loc[mask, "V_st_patricks"] = st_patricks_v[indices[mask]]
+    df_lines.loc[mask, "V_gannon"] = gannon_v[indices[mask]]
+
+    for period in return_periods:
+        df_lines.loc[mask, f"V_{period}"] = v_fields[period][indices[mask]]
+
+    df_lines[v_cols] = df_lines[v_cols].fillna(0)
+
+    logger.info("GIC data loaded and processed successfully.")
+
+    return (
+        df_lines,
+        mt_coords,
+        mt_names,
+        e_fields,
+        b_fields,
+        v_fields,
+        gannon_e,
+        v_cols,
+    )
+
+
 def load_network_data():
     """Load transmission network data"""
     tl_path = DENNIES_DATA_LOC / "admittance_matrix" / "transmission_lines.csv"
@@ -174,7 +259,13 @@ def load_network_data():
     substation_path = DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
     df_substations = pd.read_csv(substation_path)
 
-    return df_lines, df_substations
+    # pickle subs
+    GRID_DATA = DENNIES_DATA_LOC / "grid_processed"
+    SUB_DF_PATH = GRID_DATA / "ss_df.pkl"
+
+    ss_gdf_pkl = read_pickle(SUB_DF_PATH)
+
+    return df_lines, df_substations, ss_gdf_pkl
 
 
 def find_vulnerable_substations(
