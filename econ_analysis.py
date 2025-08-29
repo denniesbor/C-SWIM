@@ -11,47 +11,12 @@ from pyomo.environ import value
 from pyomo.opt import SolverFactory
 
 from configs import USE_ALPHA_BETA_SCENARIO, FIGURES_DIR, setup_logger
-from viz import plot_econo_naics, plot_vuln_trafos, plot_socio_economic_impact
-from l_prepr_data import (
-    load_and_aggregate_tiles,
-    load_gic_results,
-    process_vulnerability_chunks,
-    find_vulnerable_substations,
-    load_network_data,
-)
+
+from l_prepr_data import load_gic_results
 from models.io_model import InputOutputModel
-from models.cge_data_model import SAMDataManager, run_cge_example
+from models.cge_data_model import run_cge_example
 
 logger = setup_logger("econ impact assessment")
-
-
-def load_and_process_data():
-    """Load and process all necessary data for economic analysis"""
-    aggregate_gdf = load_and_aggregate_tiles()
-
-    combined_ds, combined_vuln, vuln_table = load_gic_results()
-
-    mean_vuln_all = process_vulnerability_chunks(
-        combined_vuln, chunk_size=50, max_realizations=2000
-    )
-
-    df_lines, df_substations = load_network_data()
-
-    common_vulnerable, vulnerability_matrix, target_scenarios = (
-        find_vulnerable_substations(mean_vuln_all)
-    )
-
-    return {
-        "aggregate_gdf": aggregate_gdf,
-        "combined_ds": combined_ds,
-        "combined_vuln": combined_vuln,
-        "mean_vuln_all": mean_vuln_all,
-        "df_lines": df_lines,
-        "df_substations": df_substations,
-        "common_vulnerable": common_vulnerable,
-        "vulnerability_matrix": vulnerability_matrix,
-        "target_scenarios": target_scenarios,
-    }
 
 
 def get_confidence_intervals(ds, alpha_beta_scenario=USE_ALPHA_BETA_SCENARIO):
@@ -455,24 +420,16 @@ def main():
     """Main analysis function"""
 
     logger.info("Loading and Processing Data")
-    data = load_and_process_data()
+    combined_ds, combined_vuln, vuln_table = load_gic_results()
 
     logger.info("Calculating Confidence Intervals")
-    confidence_df = get_confidence_intervals(data["combined_ds"])
+    confidence_df = get_confidence_intervals(combined_ds)
 
     logger.info("Running I-O Model Analysis")
     io_results_df = run_io_analysis(confidence_df)
 
-    logger.info("Running CGE Model Analysis")
-    cge_results_df = apply_cge_to_confidence_intervals(confidence_df, sam_type="us")
-
-    logger.info("Generating Visualizations")
-    plot_vuln_trafos(data["mean_vuln_all"], data["df_lines"])
-    plot_econo_naics(io_results_df, model_type="io")
-    # plot_econo_naics(cge_results_df, model_type="cge")
-
-    plot_socio_economic_impact(io_results_df, confidence_df, model_type="io")
-    # plot_socio_economic_impact(cge_results_df, confidence_df, model_type="cge")
+    # logger.info("Running CGE Model Analysis")
+    # cge_results_df = apply_cge_to_confidence_intervals(confidence_df, sam_type="us")
 
     logger.info("Saving Results")
     io_results_df.to_csv(FIGURES_DIR / "io_model_results.csv", index=False)
@@ -483,7 +440,6 @@ def main():
         "io_results": io_results_df,
         # 'cge_results': cge_results_df,
         "confidence_intervals": confidence_df,
-        "data": data,
     }
 
 
