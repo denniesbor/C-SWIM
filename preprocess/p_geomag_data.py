@@ -171,7 +171,7 @@ def prepare_dataset(combined_df):
 def run_function(geomag_folder, usgs_obs, nrcan_obs):
     """Process all geomagnetic data and save results."""
     path = geomag_folder / "combined_geomag_df.csv"
-    
+
     if os.path.exists(path):
         os.remove(path)
         logger.info(f"Removed existing file: {path}")

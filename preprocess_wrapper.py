@@ -40,7 +40,7 @@ class ProgressTracker:
         while self.running:
             elapsed = time.time() - self.start_time
             logger.info(f"Running {self.script_name}... {elapsed:.0f}s elapsed")
-            time.sleep(30)  # Update every 30 seconds
+            time.sleep(30)
 
 
 class PreprocessingPipeline:
@@ -64,7 +64,6 @@ class PreprocessingPipeline:
             progress.start()
 
             try:
-                # Set PYTHONPATH to include parent directory for configs import
                 env = os.environ.copy()
                 env["PYTHONPATH"] = str(self.root_dir) + ":" + env.get("PYTHONPATH", "")
 
@@ -112,13 +111,11 @@ class PreprocessingPipeline:
             return False
 
     def run_download_phase(self):
-        """Download phase with appropriate retry logic for unreliable magnetic data sources."""
+        """Download phase - pre-1990 magnetic data sources are unreliable and need many retries."""
         logger.info("=" * 50)
         logger.info("PHASE 2: DATA DOWNLOAD")
         logger.info("=" * 50)
 
-        # Pre-1990 magnetic data sources are unreliable and need many retries
-        # Scripts automatically skip already-downloaded data
         download_tasks = [
             ("dl_intermagnet.py", "Download Intermagnet data (1990-present)", 3),
             (
@@ -185,7 +182,6 @@ class PreprocessingPipeline:
 
         preprocessing_tasks = []
 
-        # Check dependencies
         mag_downloads = [
             "dl_intermagnet.py",
             "dl_nrcan_pre_1990.py",

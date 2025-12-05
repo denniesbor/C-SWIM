@@ -653,7 +653,9 @@ def main():
                 maxE_arr[:, i] = maxE
 
                 if calcV:
-                    if _is_special_storm(storm_df.loc[i]):  # Special storms (89, 03, 24, etc)
+                    if _is_special_storm(
+                        storm_df.loc[i]
+                    ):  # Special storms (89, 03, 24, etc)
                         # Save individual storm data
                         if i == 91:
                             storm_filename = file_path / "delaunay_v_gannon.npy"

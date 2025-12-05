@@ -209,12 +209,10 @@ def process_substations(gdf):
 
         voltage_series = gdf["voltage"].copy()
 
-
         max_voltages = pd.Series(index=gdf.index, dtype=float)
 
         numeric_mask = pd.to_numeric(voltage_series, errors="coerce").notna()
         max_voltages[numeric_mask] = pd.to_numeric(voltage_series[numeric_mask])
-
 
         string_mask = ~numeric_mask & voltage_series.notna()
 
@@ -222,11 +220,9 @@ def process_substations(gdf):
 
             string_voltages = voltage_series[string_mask].astype(str)
 
-
             simple_pattern = r"^(\d+)$"
             simple_matches = string_voltages.str.extract(simple_pattern)
             simple_mask = simple_matches[0].notna()
-
 
             simple_indices = string_voltages[simple_mask].index
             max_voltages.loc[simple_indices] = pd.to_numeric(

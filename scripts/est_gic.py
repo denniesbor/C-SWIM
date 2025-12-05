@@ -778,7 +778,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
                 data[f"GIC_{col.split('V_')[1]}"] = vals
 
             pd.DataFrame(data).to_csv(out_path, index=False)
-            
+
             del Y_e
             gc.collect()
             continue
@@ -954,7 +954,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
                 ig_cols.append(ig_full)
 
             ig_all = np.vstack(ig_cols).T  # (n_nodes, K)
-            
+
             del Y_e
             gc.collect()
 
