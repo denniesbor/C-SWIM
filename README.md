@@ -1,4 +1,5 @@
-# A Coupled Physics–Engineering–Economic Pipeline for U.S. Power Grid Impact Assessment of Extreme Space Weather
+# SWEEP-GRID: Space Weather Engineering & Economic Pipeline for the U.S. Grid
+A Coupled Physics–Engineering–Economic Pipeline for Impact Assessment of Extreme Space Weather
 ## Summary
 
 This repository provides a reproducible pipeline that (1) collects and preprocesses geomagnetic and grid datasets, (2) derives extreme geoelectric field scenarios statistically, (3) builds a geospatial/electrical admittance model of the extra-high voltage (EHV) grid, (4) simulates geomagnetically induced currents (GIC) under synthetic and historical storms, and (5) exports outputs for downstream socio-economic and reliability impact modeling (handled in the separate [`spwio`](https://github.com/denniesbor/spwio/) repository).
@@ -14,7 +15,6 @@ This work builds upon the foundational geoelectric hazard analysis framework dev
 ### Option A: Using Zenodo Data (Recommended)
 
 Download the prepared data bundle to bypass lengthy data acquisition. Once you clone this repository, extract the data at the root level (same level as preprocess, scripts, etc.):
-
 ```bash
 # Download prepared data bundle
 wget -O data-tl-emtf-storms.tar.gz "https://zenodo.org/records/16994602/files/data-tl-emtf-storms.tar.gz?download=1"
@@ -26,7 +26,6 @@ tar -xzf data-tl-emtf-storms.tar.gz
 ### Option B: Environment Setup
 
 Create the conda environment and install dependencies:
-
 ```bash
 conda env create -f environment.yml
 conda activate spw-env
@@ -44,15 +43,18 @@ The pipeline follows a nine-stage process:
 3. **Statistical extremes** — fit return-period scaling/distributions for **B/E/V**
 4. **Grid network & admittance** — substation-line topology; transformer archetype assignment
 5. **Scenario synthesis** — Gannon event + 75/100/150/200/250-year extremes
-6. **GIC simulation** — Lehtinen-Pirjola via `est_gic.py`; (2/3) thousand of Monte-Carlo transformer realizations
-7. **Post-processing** — effective/aggregated GIC metrics; bootstrap uncertainty
-8. **Export** — artifacts for economic/reliability modeling (not in this repo; see [`spwio`](https://github.com/denniesbor/spwio/))
+6. **GIC simulation** — Lehtinen-Pirjola via `est_gic.py`; (2/3) thousand Monte-Carlo transformer realizations
+7. **Post-processing** — effective/aggregated GIC metrics
+8. **Validation** — IEEE benchmark test case (Horton grid)
+9. **Export** — artifacts for economic/reliability modeling (not in this repo; see [`spwio`](https://github.com/denniesbor/spwio/))
 
 ---
 
 ## Directory Structure
-
 ```
+├── configs/
+│   ├── __init__.py
+│   └── settings.py              # Configuration settings
 ├── preprocess/                  # Data acquisition and preprocessing
 │   ├── p_identify_storm_periods.py
 │   ├── dl_intermagnet.py
@@ -65,10 +67,15 @@ The pipeline follows a nine-stage process:
 │   ├── calc_storm_maxes.py
 │   ├── stat_analysis.py
 │   ├── build_admittance_matrix.py
-│   └── est_gic.py
-├── post_process/                # Results aggregation
-│   ├── calc_eff_gic.py
-│   └── aggregate_gannon_gic.py
+│   ├── est_gic.py
+│   └── horton_grid.py
+├── postprocess/                 # Results aggregation
+│   ├── agg_scenario_gic.py
+│   ├── aggregate_gannon_gic.py
+│   └── calc_eff_gic.py
+├── preprocess_wrapper.py        # Preprocessing orchestrator
+├── run_scenarios.py             # Analysis orchestrator
+├── run_postprocess.py           # Post-processing orchestrator
 ├── data/                        # Data directory (created by pipeline)
 └── logs/                        # Execution logs
 ```
@@ -88,10 +95,22 @@ The pipeline follows a nine-stage process:
 - `stat_analysis.py` → fits statistical/extreme-value models  
 - `build_admittance_matrix.py` → builds electrical admittance matrices & bus/substation mapping → `data/admittance_matrix/`
 - `est_gic.py` → Lehtinen-Pirjola GIC over Monte-Carlo transformer configs & scenarios
+- `horton_grid.py` → IEEE benchmark test case validation (Horton et al. 2012) with Monte Carlo sensitivity analysis
 
 **Post-processing:**
+- `agg_scenario_gic.py` → Aggregate GIC results across scenarios
 - `calc_eff_gic.py` → Calculate effective GICs for downstream impact modeling
-- `aggregate_gannon_gic.py` → aggregates Gannon storm metrics for validation
+- `aggregate_gannon_gic.py` → Aggregates Gannon storm ground GIC metrics
+
+---
+
+## Configuration
+
+### Storage Paths for Large Datasets
+
+Ground GIC simulations generate ~300 GB of data for 200+ Monte Carlo runs. Specify where to store this data in `configs/settings.py`. This is where data is stored in `est_gic.py` and accessed for downstream post processing.
+
+The configuration automatically falls back to the local `data/` directory if the specified path is unavailable.
 
 ---
 
@@ -105,7 +124,7 @@ Handles storm identification, data downloads, and preprocessing in three phases:
 
 1. Storm identification → `p_identify_storm_periods.py`
 2. Downloads → `dl_intermagnet.py`, `dl_nrcan_pre_1990.py`, `dl_usgs_pre_1990.py`, `dl_power_grid_update.py`  
-3. Preprocessing → `p_geomag_data.py`, `p_power_grid.py` (iff required downloads succeed)
+3. Preprocessing → `p_geomag_data.py`, `p_power_grid.py` (only if required downloads succeed)
 
 **CLI Options:**
 ```bash
@@ -151,6 +170,30 @@ python run_scenarios.py gic --gannon-only
 python run_scenarios.py all
 ```
 
+#### 3. Post-processing Wrapper: `run_postprocess.py`
+
+Handles result aggregation and effective GIC calculations.
+
+**Sub-commands:**
+```bash
+aggregate  -> aggregate_gannon_gic.py
+effective  -> calc_eff_gic.py
+all        -> aggregate + effective
+```
+
+**CLI Options:**
+```bash
+--sequential    # run scripts serially
+--max-retries   # maximum retries per script (default: 1)
+```
+
+**Usage:**
+```bash
+python run_postprocess.py aggregate
+python run_postprocess.py effective
+python run_postprocess.py all
+```
+
 ### Validation
 
 Run IEEE benchmark test case (Horton et al. 2012) to validate GIC calculation modules:
@@ -159,14 +202,14 @@ python scripts/horton_grid.py
 ```
 
 This script:
-- Tests GIC calculation modules against IEEE benchmark data
-- Computes line GICs, transformer winding GICs, and substation ground GICs from the benchmark data
-- Performs Monte Carlo sensitivity analysis (5000 scenarios) with random grid configuration variants (as applied to the entire U.S. grid)
+- Tests all GIC calculation modules against IEEE benchmark data
+- Computes line GICs, transformer winding GICs, and substation ground GICs
+- Performs Monte Carlo sensitivity analysis (5000 scenarios) with random grid configuration variants
+- Saves validation results to `data/horton_grid/mc_results.pkl`
 
 ### Manual Sequential Execution
 
 For step-by-step control, run scripts in order:
-
 ```bash
 # 1. Storm identification
 python preprocess/p_identify_storm_periods.py
@@ -175,10 +218,10 @@ python preprocess/p_identify_storm_periods.py
 python preprocess/dl_usgs_pre_1990.py
 python preprocess/dl_nrcan_pre_1990.py
 python preprocess/dl_intermagnet.py
+python preprocess/dl_power_grid_update.py
 
 # 3. Data preprocessing
 python preprocess/p_geomag_data.py
-python preprocess/dl_power_grid_update.py  
 python preprocess/p_power_grid.py
 
 # 4. Analysis pipeline
@@ -188,10 +231,11 @@ python scripts/build_admittance_matrix.py
 python scripts/est_gic.py
 
 # 5. Post-processing
-python post_process/calc_eff_gic.py
-python post_process/aggregate_gannon_gic.py
+python postprocess/agg_scenario_gic.py
+python postprocess/calc_eff_gic.py
+python postprocess/aggregate_gannon_gic.py
 
-# 6. Validation (this is optional)
+# 6. Validation (optional)
 python scripts/horton_grid.py
 ```
 
@@ -226,7 +270,6 @@ python scripts/horton_grid.py
 ## Citation
 
 If you use this pipeline in your research, please cite:
-
 ```bibtex
 @misc{oughton2024physics,
   title={A physics-engineering-economic model coupling approach for estimating the socio-economic impacts of space weather scenarios}, 
@@ -240,7 +283,6 @@ If you use this pipeline in your research, please cite:
 ```
 
 This work builds upon the foundational methodology from:
-
 ```bibtex
 @article{lucas2020100year,
   title={100-year Geoelectric Hazard Analysis for the U.S. High-Voltage Power Grid},
@@ -253,8 +295,22 @@ This work builds upon the foundational methodology from:
 }
 ```
 
-For the data products, please also cite:
+For the IEEE benchmark test case, please cite:
+```bibtex
+@article{horton_test_2012,
+  title = {A {Test} {Case} for the {Calculation} of {Geomagnetically} {Induced} {Currents}},
+  volume = {27},
+  number = {4},
+  pages = {2368--2373},
+  year = {2012},
+  issn = {1937-4208},
+  doi = {10.1109/TPWRD.2012.2206407},
+  journal = {IEEE Transactions on Power Delivery},
+  author = {Horton, Randy and Boteler, David and Overbye, Thomas J. and Pirjola, Risto and Dugan, Roger C.}
+}
+```
 
+For the data products, please also cite:
 ```bibtex
 @dataset{bor2025geomag,
   author = {Bor, D.},
