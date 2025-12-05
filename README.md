@@ -105,7 +105,7 @@ Handles storm identification, data downloads, and preprocessing in three phases:
 
 1. Storm identification → `p_identify_storm_periods.py`
 2. Downloads → `dl_intermagnet.py`, `dl_nrcan_pre_1990.py`, `dl_usgs_pre_1990.py`, `dl_power_grid_update.py`  
-3. Preprocessing → `p_geomag_data.py`, `p_power_grid.py` (only if required downloads succeed)
+3. Preprocessing → `p_geomag_data.py`, `p_power_grid.py` (iff required downloads succeed)
 
 **CLI Options:**
 ```bash
@@ -151,6 +151,18 @@ python run_scenarios.py gic --gannon-only
 python run_scenarios.py all
 ```
 
+### Validation
+
+Run IEEE benchmark test case (Horton et al. 2012) to validate GIC calculation modules:
+```bash
+python scripts/horton_grid.py
+```
+
+This script:
+- Tests GIC calculation modules against IEEE benchmark data
+- Computes line GICs, transformer winding GICs, and substation ground GICs from the benchmark data
+- Performs Monte Carlo sensitivity analysis (5000 scenarios) with random grid configuration variants (as applied to the entire U.S. grid)
+
 ### Manual Sequential Execution
 
 For step-by-step control, run scripts in order:
@@ -178,6 +190,9 @@ python scripts/est_gic.py
 # 5. Post-processing
 python post_process/calc_eff_gic.py
 python post_process/aggregate_gannon_gic.py
+
+# 6. Validation (this is optional)
+python scripts/horton_grid.py
 ```
 
 ---
