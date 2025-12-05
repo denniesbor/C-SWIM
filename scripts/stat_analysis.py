@@ -69,6 +69,28 @@ def lognormal_ppf(y, mu, sigma, xmin):
     return np.exp(mu + np.sqrt(2) * sigma * Q)
 
 
+def lognormal_ppf(y, mu, sigma, xmin):
+    erf = scipy.special.erf
+    erfinv = scipy.special.erfinv
+    eps = 1e-12
+
+    if not np.isfinite(mu) or not np.isfinite(sigma) or sigma <= 0:
+        return np.nan
+
+    xmin = max(float(xmin), eps)
+    y = np.clip(y, eps, 1.0 - eps)
+
+    t = (np.log(xmin) - mu) / (np.sqrt(2.0) * sigma)
+    Q = np.clip(erf(t), -1.0 + eps, 1.0 - eps)
+
+    A = np.clip(Q * y - y + 1.0, -1.0 + eps, 1.0 - eps)  # input to erfinv ∈ (-1,1)
+    Z = erfinv(A)
+
+    val = mu + np.sqrt(2.0) * sigma * Z
+    # prevent overflow in exp
+    return np.exp(np.clip(val, np.log(eps), 7.0e2))
+
+
 def fit_data(data):
     """Fit a lognormal model to |data| and store sign for back-transformation."""
     sign_vector = np.sign(np.mean(np.nan_to_num(data, nan=0)))
@@ -84,12 +106,47 @@ def fit_data(data):
     return fitting_func
 
 
+def fit_data(data):
+    """Fit a lognormal model to |data| and store sign for back-transformation."""
+    sign_vector = np.sign(np.mean(np.nan_to_num(data, nan=0.0)))
+
+    abs_data = np.abs(np.asarray(data, float))
+    abs_data = abs_data[np.isfinite(abs_data)]
+    abs_data = abs_data[abs_data > 0]  # avoid xmin==0
+    if abs_data.size < 5:
+        return None
+
+    xmin0 = float(np.min(abs_data))
+    xminp = float(np.percentile(abs_data, 1.0))
+    xmin = max(xmin0, xminp)  # keep xmin away from 0
+
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = powerlaw.Fit(abs_data, xmin=xmin, verbose=False)
+    fitting_func = fit.lognormal
+
+    # sanity: finite parameters and stable CDF on a safe grid
+    if (
+        (not np.isfinite(fitting_func.mu))
+        or (not np.isfinite(fitting_func.sigma))
+        or (fitting_func.sigma <= 0)
+    ):
+        return None
+    test_x = np.linspace(xmin, np.percentile(abs_data, 99.0), 8)
+    if np.any(~np.isfinite(fitting_func.cdf(test_x))):
+        return None
+
+    fitting_func.sign_vector = sign_vector
+    return fitting_func
+
+
 def calc_return_period(fitting_func, return_period, nyears):
     """Calculate return-period value from a fitted lognormal model."""
     ndata = len(fitting_func.parent_Fit.data)
     if ndata == 0:
         return np.nan
     x_return = 1 - (1 / return_period) * nyears / ndata
+    x_return = np.clip(x_return, 1e-12, 1 - 1e-12)
     y_return = lognormal_ppf(
         1 - x_return, fitting_func.mu, fitting_func.sigma, xmin=fitting_func.xmin
     )
@@ -125,14 +182,21 @@ def process_site(site_data, n_samples, n_years, return_periods, quantity):
     results = {period: np.full(n_samples, np.nan) for period in return_periods}
     max_attempts = 100
 
-    # Generate all samples at once
-    sampled_data = np.random.choice(site_data, (max_attempts, n_years), replace=True)
-
-    # Normalize data
+    # Build sampling pool (finite, non-zero; scale only once)
+    base = np.asarray(site_data, float)
     if quantity not in ["B", "V"]:
-        sampled_data /= 1000.0
+        base = base / 1000.0
+    base = base[np.isfinite(base)]
+    base = base[np.abs(base) > 1e-12]  # avoid xmin==0 / empty pool
 
-    sampled_data = np.sort(np.nan_to_num(sampled_data), axis=1)
+    # If no usable data, leave this site's results as NaN and skip
+    if base.size < 5:
+        logger.warning("No valid samples for site; skipping")
+        return results
+
+    # Generate all samples at once
+    sampled_data = np.random.choice(base, (max_attempts, n_years), replace=True)
+    sampled_data = np.sort(sampled_data, axis=1)
 
     valid_samples = 0
     for attempt in range(max_attempts):
@@ -202,8 +266,8 @@ def confidence_limits(results, return_periods):
             lower_mean = np.nanmean(lower)
             upper_mean = np.nanmean(upper)
 
-    # Site-specific results (vectorized)
-    num_sites = median.shape[0]  # Assuming `median` is 1D
+    # Site-specific results
+    num_sites = median.shape[0]
     for i in range(num_sites):
         for period in return_periods:
             lower, median, upper = confidence_intervals[period]
@@ -373,6 +437,17 @@ if __name__ == "__main__":
     maxE_st_patricks = flatten_max_values(maxE_arr, st_patricks_idx)
     maxV_st_patricks = flatten_max_values(maxV_arr, st_patricks_idx)
 
+    # Hydro Quebec storm max values
+    maxB_hydro_quebec = flatten_max_values(
+        maxB_arr, get_event_indices(storm_df, hydro_quebec_start, hydro_quebec_end)
+    )
+    maxE_hydro_quebec = flatten_max_values(
+        maxE_arr, get_event_indices(storm_df, hydro_quebec_start, hydro_quebec_end)
+    )
+    maxV_hydro_quebec = flatten_max_values(
+        maxV_arr, get_event_indices(storm_df, hydro_quebec_start, hydro_quebec_end)
+    )
+
     # Save data into an HDF5 file
     path_out = DATA_LOC / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
     with h5py.File(path_out, "w") as f:
@@ -391,7 +466,7 @@ if __name__ == "__main__":
         transmission_lines.create_dataset("line_ids", data=line_ids)
 
         # Store real storm data
-        for storm in ["halloween", "gannon", "st_patricks"]:
+        for storm in ["halloween", "gannon", "st_patricks", "hydro_quebec"]:
             storm_group = events.create_group(storm)
             storm_group.create_dataset("E", data=locals()[f"maxE_{storm}"])
             storm_group.create_dataset("B", data=locals()[f"maxB_{storm}"])

@@ -18,7 +18,6 @@ from configs import setup_logger, get_data_dir
 
 warnings.filterwarnings("ignore")
 
-# Setup
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/dl_substations.log")
 data_path = DATA_LOC / "substation_locations"
@@ -52,7 +51,6 @@ def download_substations_full():
             logger.info(f"Downloaded {len(gdf)} substations")
             gdf = process_substations(gdf)
 
-            # Save
             output_path = data_path / "us_substations_full.geojson"
             gdf.to_file(output_path, driver="GeoJSON")
 
@@ -84,7 +82,6 @@ def download_substations_regions():
         "Northwest": (40.5, -125.5, 49.5, -101.0),  # WA to MT, OR to WY
         "Alaska": (51.0, -180.0, 72.0, -129.0),
         "Hawaii": (18.0, -161.0, 23.0, -154.0),
-        # Additional coverage for potential gaps
         "Central_Atlantic": (35.0, -82.0, 42.0, -71.0),  # NC to NJ
         "Four_Corners": (31.0, -115.0, 42.0, -102.0),  # UT/CO/AZ/NM area
     }
@@ -109,10 +106,8 @@ def download_substations_regions():
     if all_substations:
         combined_gdf = pd.concat(all_substations, ignore_index=True)
 
-        # Remove duplicates and convert to points
         combined_gdf = process_substations(combined_gdf)
 
-        # Save
         output_path = data_path / "us_substations_regions.geojson"
         combined_gdf.to_file(output_path, driver="GeoJSON")
 
@@ -136,7 +131,7 @@ def convert_to_geodataframe(overpass_data):
 
     features = []
 
-    # Define essential tags to extract
+    # essential tags to extract
     essential_tags = {
         "name",
         "operator",
@@ -165,7 +160,6 @@ def convert_to_geodataframe(overpass_data):
             if tag in tags:
                 properties[tag] = tags[tag]
 
-        # Always include these
         properties["osmid"] = element["id"]
         properties["element_type"] = element["type"]
 
@@ -206,46 +200,43 @@ def process_substations(gdf):
 
     gdf["original_geom_type"] = gdf.geometry.geom_type
 
-    # Vectorized geometry conversion to points
     point_mask = gdf.geometry.geom_type == "Point"
     gdf.loc[~point_mask, "geometry"] = gdf.loc[~point_mask, "geometry"].apply(
         lambda geom: geom.representative_point()
     )
 
     if "voltage" in gdf.columns:
-        # Create a copy for processing
+
         voltage_series = gdf["voltage"].copy()
 
-        # Initialize results
+
         max_voltages = pd.Series(index=gdf.index, dtype=float)
 
-        # Handle numeric values directly (already in the right format)
         numeric_mask = pd.to_numeric(voltage_series, errors="coerce").notna()
         max_voltages[numeric_mask] = pd.to_numeric(voltage_series[numeric_mask])
 
-        # Handle string values
+
         string_mask = ~numeric_mask & voltage_series.notna()
 
         if string_mask.any():
-            # Convert to string and process
+
             string_voltages = voltage_series[string_mask].astype(str)
 
-            # Vectorized extraction for simple cases (single voltage)
+
             simple_pattern = r"^(\d+)$"
             simple_matches = string_voltages.str.extract(simple_pattern)
             simple_mask = simple_matches[0].notna()
 
-            # Update max_voltages for simple cases
+
             simple_indices = string_voltages[simple_mask].index
             max_voltages.loc[simple_indices] = pd.to_numeric(
                 simple_matches.loc[simple_mask, 0]
             )
 
-            # Handle complex cases (multiple voltages with semicolon)
             complex_mask = string_voltages.str.contains(";", na=False)
 
             if complex_mask.any():
-                # For complex cases, we need to extract all numbers and find max
+
                 complex_voltages = string_voltages[complex_mask]
 
                 def extract_max_from_string(s):
@@ -259,7 +250,6 @@ def process_substations(gdf):
         gdf["max_voltage"] = max_voltages
         gdf["voltage_kv"] = gdf["max_voltage"] / 1000
 
-    # Define final columns to keep for power grid analysis
     essential_columns = [
         "geometry",
         # Core identifiers
@@ -283,13 +273,11 @@ def process_substations(gdf):
         "addr:state",
         "addr:city",
         "addr:county",
-        # Other useful
         "ref",
         "network",
         "start_date",
     ]
 
-    # Only keep columns that exist
     existing_columns = [col for col in essential_columns if col in gdf.columns]
     gdf = gdf[existing_columns]
 
@@ -320,10 +308,8 @@ def download_region(bbox, timeout=300):
         response.raise_for_status()
         data = response.json()
 
-        # Use optimized conversion
         gdf = convert_to_geodataframe(data)
 
-        # Apply processing to clean and reduce columns
         if len(gdf) > 0:
             gdf = process_substations(gdf)
 
@@ -342,15 +328,14 @@ if __name__ == "__main__":
     # Always do regional download as backup
     regional_result = download_substations_regions()
 
-    # Report results
     if full_result is not None:
-        print(f"Full download: {len(full_result)} substations")
+        logger.info(f"Full download: {len(full_result)} substations")
     else:
-        print("Full download: Failed")
+        logger.error("Full download: Failed")
 
     if regional_result is not None:
-        print(f"Regional download: {len(regional_result)} substations")
+        logger.info(f"Regional download: {len(regional_result)} substations")
     else:
-        print("Regional download: Failed")
+        logger.error("Regional download: Failed")
 
-    print(f"Data saved to: {data_path}")
+    logger.info(f"Data saved to: {data_path}")

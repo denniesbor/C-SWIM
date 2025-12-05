@@ -171,19 +171,22 @@ def prepare_dataset(combined_df):
 def run_function(geomag_folder, usgs_obs, nrcan_obs):
     """Process all geomagnetic data and save results."""
     path = geomag_folder / "combined_geomag_df.csv"
-    if not os.path.exists(path):
-        results, obsv_xarrays = process_all_directories(
-            geomag_folder, usgs_obs, nrcan_obs
-        )
-        logger.info(f"Processed {len(obsv_xarrays)} valid observatories")
-        combined_df = pd.concat(combine_results(results, obsv_xarrays))
-        combined_df.to_csv(path)
-    else:
-        combined_df = pd.read_csv(path)
+    
+    if os.path.exists(path):
+        os.remove(path)
+        logger.info(f"Removed existing file: {path}")
+
+    results, obsv_xarrays = process_all_directories(geomag_folder, usgs_obs, nrcan_obs)
+    logger.info(f"Processed {len(obsv_xarrays)} valid observatories")
+
+    combined_df = pd.concat(combine_results(results, obsv_xarrays))
+    combined_df.to_csv(path)
+    logger.info(f"Saved combined data to: {path}")
+
     ds = prepare_dataset(combined_df)
-    ds.to_netcdf(
-        geomag_folder / "processed_geomag_data.nc", format="NETCDF4", engine="netcdf4"
-    )
+    netcdf_path = geomag_folder / "processed_geomag_data.nc"
+    ds.to_netcdf(netcdf_path, format="NETCDF4", engine="netcdf4")
+    logger.info(f"Saved NetCDF data to: {netcdf_path}")
 
     return
 

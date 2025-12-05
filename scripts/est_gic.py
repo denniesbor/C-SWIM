@@ -32,6 +32,8 @@ from build_admittance_matrix import (
     process_substation_buses,
     random_admittance_matrix,
     get_transformer_samples,
+    randomize_grounding_resistance,
+    apply_random_line_dc_blocking,
 )
 
 from configs import setup_logger, get_data_dir, GROUND_GIC_DIR
@@ -46,6 +48,9 @@ os.makedirs(processed_gnd_gic_path, exist_ok=True)
 
 # Return periods for GIC calculations
 return_periods = np.arange(50, 251, 25)
+
+seed_base = 42
+P_LINE_BLOCK = 0.01  # Probability of line blocking device
 
 
 def find_substation_name(bus, sub_ref):
@@ -111,6 +116,39 @@ def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
 
     df_lines[v_cols] = df_lines[v_cols].fillna(0)
 
+    tmpl_dir = DATA_LOC / "storm_maxes"
+
+    # Read the 1989 delaunay array
+    arr_v_march89 = np.load(tmpl_dir / "delaunay_v_march89.npy")
+
+    # Read the gannon array data
+    arr_v_gannon = np.load(tmpl_dir / "delaunay_v_gannon.npy")
+
+    # Append signage
+    sgn_gannon = v_direction(arr_v_gannon)  # (L,)
+    sgn_march89 = v_direction(arr_v_march89)  # (L,)
+
+    # Map to df_lines row order using existing index mapping
+    sgn_gannon_df = np.full(df_lines.shape[0], np.nan, dtype=float)
+    sgn_march89_df = np.full(df_lines.shape[0], np.nan, dtype=float)
+    sgn_gannon_df[mask] = sgn_gannon[indices[mask]]
+    sgn_march89_df[mask] = sgn_march89[indices[mask]]
+
+    df_lines["sgn_gannon"] = sgn_gannon_df
+    df_lines["sgn_march89"] = sgn_march89_df
+
+    sgn = df_lines["sgn_gannon"].to_numpy()
+    if "sgn_march89" in df_lines.columns:
+        sgn = np.where(
+            np.isfinite(sgn) & (sgn != 0), sgn, df_lines["sgn_march89"].to_numpy()
+        )
+    sgn = np.where(np.isfinite(sgn) & (sgn != 0), sgn, 1.0)
+
+    for period in return_periods:
+        col = f"V_{period}"
+        if col in df_lines.columns:
+            df_lines[col] = df_lines[col].to_numpy() * sgn
+
     logger.info("GIC data loaded and processed successfully.")
 
     return (
@@ -125,24 +163,18 @@ def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
     )
 
 
-def calculate_injection_currents_vectorized(
-    df, n_nodes, col, non_zero_indices, sub_look_up
-):
-    """Calculate injection currents for power system network."""
-    logger.info(f"Calculating injection currents for {col} (vectorized)...")
-    injection_currents = np.zeros(n_nodes, dtype=np.float64)
-
-    I_eff = df[col] / df["R"]
-    valid = ~I_eff.isna()
-
-    i_idx = df["from_bus"].loc[valid].map(sub_look_up).to_numpy()
-    j_idx = df["to_bus"].loc[valid].map(sub_look_up).to_numpy()
-    I_eff_valid = I_eff.loc[valid].to_numpy()
-
-    np.add.at(injection_currents, i_idx, -I_eff_valid)
-    np.add.at(injection_currents, j_idx, I_eff_valid)
-
-    return injection_currents[non_zero_indices]
+def v_direction(V):
+    # Sign of the max voltage
+    absV = np.abs(V)
+    p95 = np.nanpercentile(absV, 95, axis=0)
+    top = absV >= p95[None, :]
+    sgn = np.sign(np.nanmedian(np.where(top, V, np.nan), axis=0))
+    bad = (~np.isfinite(sgn)) | (sgn == 0)
+    if np.any(bad):
+        idx = np.nanargmax(absV[:, bad], axis=0)
+        s_alt = np.sign(V[idx, np.arange(bad.sum())])
+        sgn[bad] = np.where(s_alt == 0, 1.0, s_alt)
+    return sgn.astype(float)
 
 
 def calculate_GIC(df, V_nodal, col, non_zero_indices, n_nodes):
@@ -255,14 +287,26 @@ def calc_trafo_gic(
     return gic
 
 
-def get_injection_currents_vectorized(
-    df_lines, n_nodes, non_zero_indices, sub_look_up, DATA_LOC, gannon_storm_only=False
+def get_injection_currents(
+    df_lines,
+    n_nodes,
+    non_zero_indices,
+    sub_look_up,
+    DATA_LOC,
+    gannon_storm_only=False,
+    gic_test_case=False,
 ):
     """Calculate injection currents for power system nodes using vectorized operations."""
     logger.info("Calculating injection currents (fully vectorized)...")
 
     if gannon_storm_only:
         cols = [col for col in df_lines.columns if "V_gannon" in col]
+    elif gic_test_case:
+        cols = [
+            col
+            for col in df_lines.columns
+            if col.startswith("V_") and col in ["V_northward", "V_eastward"]
+        ]
     else:
         cols = ["V_halloween", "V_st_patricks", "V_gannon"] + [
             f"V_{period}" for period in return_periods
@@ -282,6 +326,12 @@ def get_injection_currents_vectorized(
         pos = np.bincount(to_idx, weights=I_eff_mat[:, j], minlength=n_nodes)
         neg = np.bincount(from_idx, weights=I_eff_mat[:, j], minlength=n_nodes)
         injection_currents_all[:, j] = pos - neg
+
+    logger.info(
+        f"Injection matrix: shape={injection_currents_all.shape}, "
+        f"finite={np.isfinite(injection_currents_all).all()}, "
+        f"nonzero_rows={np.any(injection_currents_all != 0, axis=1).sum()}"
+    )
 
     injections_data = {
         col: injection_currents_all[non_zero_indices, j] for j, col in enumerate(cols)
@@ -311,7 +361,7 @@ def can_use_float16(arr):
     return (max_abs < 65504 and min_abs > 6.1e-5) or max_abs == 0
 
 
-def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
+def nodal_voltage_calculation(Y_total, injections_data):
     """Calculate nodal voltages using PyTorch with robust fallbacks."""
     logger.info("Calculating nodal voltages using PyTorch...")
 
@@ -357,54 +407,67 @@ def nodal_voltage_calculation_torch_vectorized(Y_total, injections_data):
         dim=-1,
     )
 
-    # Try Cholesky with adaptive regularization
-    success = False
-    L = None
-    Y_reg = None
-    reg_values = [1e-8, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2]
+    # Sanitize inputs
+    if not torch.isfinite(Y_tensor).all():
+        logger.warning("Y_tensor contains non-finite values, cleaning...")
+        Y_tensor = torch.nan_to_num(Y_tensor, nan=0.0, posinf=0.0, neginf=0.0)
 
-    for reg in reg_values:
-        Y_reg = Y_tensor + reg * torch.eye(
-            Y_tensor.shape[0], dtype=torch.float32, device=device
+    if not torch.isfinite(injection_batch).all():
+        logger.warning("injection_batch contains non-finite values, cleaning...")
+        injection_batch = torch.nan_to_num(
+            injection_batch, nan=0.0, posinf=0.0, neginf=0.0
         )
+
+    # Always solve in float64 for stability
+    Y64 = Y_tensor.to(torch.float64)
+    B64 = injection_batch.to(torch.float64)
+
+    I = torch.eye(Y64.shape[0], dtype=torch.float64, device=Y64.device)
+    V_n = None
+
+    # 1) Try Cholesky with small regularization
+    for reg in (1e-6, 1e-5, 1e-4, 1e-3):
         try:
+            Y_reg = Y64 + reg * I
             L = torch.linalg.cholesky(Y_reg)
-            logger.info(f"Cholesky succeeded with regularization: {reg}")
-            success = True
-            break
+            V_try = torch.cholesky_solve(B64, L)
+            if torch.isfinite(V_try).all():
+                V_n = V_try
+                logger.info(f"Cholesky succeeded with reg={reg}")
+                break
         except Exception as e:
-            logger.debug(f"Cholesky failed with reg={reg}: {e}")
+            logger.debug(f"Cholesky failed (reg={reg}): {e}")
 
-    if not success:
-        logger.info("Trying selective diagonal regularization...")
-        diag = torch.diag(Y_tensor)
-        add_diag = (diag < 1e-10).float() * 1e-3
-        Y_reg = Y_tensor + torch.diag_embed(add_diag)
-        try:
-            L = torch.linalg.cholesky(Y_reg)
-            logger.info("Cholesky succeeded with selective diagonal regularization.")
-            success = True
-        except Exception as e:
-            logger.debug(f"Selective Cholesky failed: {e}")
+    # 2) If Cholesky failed, try direct solve (LU w/ pivoting)
+    if V_n is None:
+        for reg in (1e-6, 1e-5, 1e-4, 1e-3):
+            try:
+                Y_reg = Y64 + reg * I
+                V_try = torch.linalg.solve(Y_reg, B64)
+                if torch.isfinite(V_try).all():
+                    V_n = V_try
+                    logger.info(f"Direct solve succeeded with reg={reg}")
+                    break
+            except Exception as e:
+                logger.debug(f"Direct solve failed (reg={reg}): {e}")
 
-    if success:
-        try:
-            P = torch.linalg.solve_triangular(L, injection_batch, upper=False)
-            V_n = torch.linalg.solve_triangular(L.transpose(-1, -2), P, upper=True)
-        except Exception as e:
-            logger.debug(f"Triangular solve failed: {e}")
-            V_n = torch.linalg.solve(Y_reg, injection_batch)
-    else:
-        logger.info("Cholesky failed; falling back to robust solver.")
-        try:
-            V_n = torch.linalg.solve(Y_tensor, injection_batch)
-        except Exception as e_solve:
-            logger.debug(f"Direct solve failed: {e_solve}")
-            V_n = torch.linalg.lstsq(Y_tensor, injection_batch).solution
+    # 3) Final fallback: damped least squares
+    if V_n is None:
+        logger.info("Using damped least squares fallback")
+        lam = 1e-4
+        V_n = torch.linalg.lstsq(Y64 + lam * I, B64).solution
 
-    results = {
-        k: V_n[:, idx].detach().cpu().numpy() for idx, k in enumerate(valid_keys)
-    }
+    V_n = V_n.to(torch.float32)
+    results = {k: V_n[:, i].detach().cpu().numpy() for i, k in enumerate(valid_keys)}
+
+    # Final guard: replace any residual NaNs with zero
+    for k in results:
+        if not np.isfinite(results[k]).all():
+            logger.warning(f"Found non-finite values in {k}, setting to zero")
+            r = results[k]
+            r[~np.isfinite(r)] = 0.0
+            results[k] = r
+
     logger.info("Nodal voltage calculation completed.")
     return results
 
@@ -522,77 +585,53 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
     return (df_lines, mt_coords, mt_names, gannon_e, v_cols)
 
 
-def pre_compute_ze(Y):
-    """Compute impedance matrix from admittance matrix with zero handling."""
-    with np.errstate(divide="ignore", invalid="ignore"):
-        Z = np.reciprocal(Y, where=Y != 0)
-        Z[Y == 0] = 0
-        return Z
+def keep_nodes_with_ground(Y_n, Y_e):
+    """Keep only nodes that are in components with at least one grounded node."""
+    # Adjacency from network admittance (ignore self-diagonal)
+    A = (Y_n != 0).astype(bool)
+    np.fill_diagonal(A, False)
+
+    # Component labels by BFS/DFS
+    N = A.shape[0]
+    comp = -np.ones(N, dtype=int)
+    cid = 0
+    for s in range(N):
+        if comp[s] != -1:
+            continue
+        # BFS
+        q = [s]
+        comp[s] = cid
+        for u in q:
+            nbrs = np.flatnonzero(A[u])
+            for v in nbrs:
+                if comp[v] == -1:
+                    comp[v] = cid
+                    q.append(v)
+        cid += 1
+
+    grounded = np.diag(Y_e) > 0
+    comp_has_ground = np.zeros(cid, dtype=bool)
+    np.logical_or.at(comp_has_ground, comp[grounded], True)
+
+    keep = comp_has_ground[comp]
+    return np.flatnonzero(keep)
 
 
-def solve_total_nodal_gic_optimized(Z, V_all, verbose=False):
-    if Z.shape[0] != Z.shape[1] or V_all.shape[1] != Z.shape[0]:
-        logger.error(f"Dimension mismatch: Z{Z.shape}, V_all{V_all.shape}")
-        raise ValueError(f"Dimension mismatch: Z{Z.shape}, V_all{V_all.shape}")
+def solve_total_nodal_gic(Y_e_reduced, V_nodal, non_zero_indices, n_nodes):
 
-    V_T = np.asarray(V_all, dtype=np.float64).T
-    N, C = V_T.shape
+    # Ensure 1D nodal vector for the reduced system
+    v_red = np.asarray(V_nodal, dtype=float).ravel()  # (N_reduced,)
+    y_diag = np.diag(Y_e_reduced).astype(float)  # (N_reduced,)
 
-    if verbose:
-        logger.info(f"Solver input: Z{Z.shape}, V_all{V_all.shape}")
-        logger.info(f"Matrix type: {'sparse' if sp.issparse(Z) else 'dense'}")
+    # Per-phase ground current on reduced nodes (diagonal multiply), then total 3-phase
+    i_e_red = y_diag * v_red
+    i_e_red *= 3.0
 
-    if sp.issparse(Z):
-        Z_csc = Z.tocsc(copy=False)
-        lu = None
-        for lam in (0.0, 1e-10, 1e-8, 1e-6, 1e-4):
-            try:
-                if lam != 0.0:
-                    Z_reg = Z_csc + sp.eye(N, format="csc") * lam
-                    if verbose and lam > 0:
-                        logger.info(f"Trying sparse LU with regularization λ={lam}")
-                else:
-                    Z_reg = Z_csc
-                    if verbose:
-                        logger.info("Trying sparse LU without regularization")
-                lu = splu(Z_reg)
-                break
-            except Exception as e:
-                if verbose:
-                    logger.debug(f"Sparse LU failed with λ={lam}: {str(e)}")
-                lu = None
+    # Scatter back to full node indexing
+    full = np.zeros(n_nodes, dtype=i_e_red.dtype)
+    full[non_zero_indices] = i_e_red
 
-        if lu is not None:
-            if verbose:
-                logger.info("Successfully using sparse LU factorization")
-            return lu.solve(V_T) * 3.0
-        else:
-            logger.warning("Sparse LU failed, falling back to LSQR")
-            I_out = np.zeros((N, C), dtype=np.float64)
-            for j in range(C):
-                I_out[:, j] = lsqr(Z_csc, V_T[:, j], atol=1e-10, btol=1e-10)[0]
-            return I_out * 3.0
-    else:
-        Z = np.asarray(Z, dtype=np.float64)
-        for lam in (0.0, 1e-10, 1e-8, 1e-6, 1e-4):
-            try:
-                Z_reg = Z if lam == 0.0 else (Z + lam * np.eye(N))
-                if verbose:
-                    if lam == 0.0:
-                        logger.info("Trying dense solve without regularization")
-                    else:
-                        logger.info(f"Trying dense solve with regularization λ={lam}")
-                result = dense_solve(Z_reg, V_T) * 3.0
-                if verbose:
-                    logger.info("Successfully using dense direct solve")
-                return result
-            except Exception as e:
-                if verbose:
-                    logger.debug(f"Dense solve failed with λ={lam}: {str(e)}")
-                continue
-
-        logger.warning("Dense solve failed, falling back to least squares")
-        return dense_lstsq(Z, V_T, rcond=None)[0] * 3.0
+    return full
 
 
 def main(generate_grid_only=False, gannon_storm_only=False):
@@ -616,7 +655,9 @@ def main(generate_grid_only=False, gannon_storm_only=False):
     )
 
     sub_ref = dict(zip(df_substations_info.name, df_substations_info.buses))
-    trafos_data = get_transformer_samples(substation_buses)
+    trafos_data = get_transformer_samples(
+        substation_buses, new_trafos=False
+    )  # To use new transformers, set new_trafos=True
 
     if gannon_storm_only:
         df_lines, mt_coords, mt_names, gannon_e, v_cols = process_gannon(
@@ -639,6 +680,14 @@ def main(generate_grid_only=False, gannon_storm_only=False):
 
     logger.info("Starting GIC calculations...")
     for i, trafo_data in enumerate(trafos_data):
+
+        df_ss_iter = randomize_grounding_resistance(
+            df_substations_info, seed=seed_base + i
+        )
+        df_lines_iter = apply_random_line_dc_blocking(
+            df_lines, p_block=P_LINE_BLOCK, seed=seed_base + i
+        )
+
         if i < 0:
             continue
 
@@ -658,35 +707,35 @@ def main(generate_grid_only=False, gannon_storm_only=False):
             trafo_data,
             bus_ids_map,
             sub_look_up,
-            df_lines,
-            df_substations_info,
+            df_lines_iter,
+            df_ss_iter,
         )
 
-        zero_row_indices = np.where(np.all(Y_n == 0, axis=1))[0]
-        non_zero_indices = np.setdiff1d(np.arange(Y_n.shape[0]), zero_row_indices)
-
         if can_use_float16(Y_n) and can_use_float16(Y_e):
-            Y_n = Y_n.astype(np.float16)
-            Y_e = Y_e.astype(np.float16)
-            dtype = np.float16
-        elif np.max(np.abs(Y_n)) < 3.4e38 and np.max(np.abs(Y_e)) < 3.4e38:
-            Y_n = Y_n.astype(np.float32)
-            Y_e = Y_e.astype(np.float32)
+            dtype = np.float32
+        elif (np.max(np.abs(Y_n)) < 3.4e38) and (np.max(np.abs(Y_e)) < 3.4e38):
             dtype = np.float32
         else:
             dtype = np.float64
 
-        logger.info(f"Using {dtype} for matrices")
+        Y_n = Y_n.astype(dtype, copy=False)
+        Y_e = Y_e.astype(dtype, copy=False)
 
+        row_active = np.any(Y_n != 0, axis=1) | np.any(Y_e != 0, axis=1)
+        nz = np.flatnonzero(row_active)
+        keep = keep_nodes_with_ground(Y_n[np.ix_(nz, nz)], Y_e[np.ix_(nz, nz)])
+        non_zero_indices = nz[keep]
+
+        # Reduce
         Y_n = Y_n[np.ix_(non_zero_indices, non_zero_indices)]
         Y_e = Y_e[np.ix_(non_zero_indices, non_zero_indices)]
-        Y_total = np.add(Y_n, Y_e, dtype=dtype)
+        Y_total = Y_n + Y_e
 
         del Y_n
         gc.collect()
 
-        injections_data = get_injection_currents_vectorized(
-            df_lines,
+        injections_data = get_injection_currents(
+            df_lines_iter,
             n_nodes,
             non_zero_indices,
             sub_look_up,
@@ -694,32 +743,48 @@ def main(generate_grid_only=False, gannon_storm_only=False):
             gannon_storm_only=gannon_storm_only,
         )
 
-        nodal_voltages = nodal_voltage_calculation_torch_vectorized(
-            Y_total, injections_data
-        )
+        nodal_voltages = nodal_voltage_calculation(Y_total, injections_data)
 
         if gannon_storm_only:
-            Z_e = pre_compute_ze(Y_e)
-            v_all = np.vstack([nodal_voltages[c] for c in v_cols])
-            ig_all = solve_total_nodal_gic_optimized(Z_e, v_all)
+            # Build ground GIC output for all voltage columns
+            v_keys = [
+                c
+                for c in v_cols
+                if c in nodal_voltages and nodal_voltages[c] is not None
+            ]
+            if not v_keys:
+                logger.error("No valid voltage keys for ground GIC.")
+                continue
 
-            idx_series = df_substations_info["name"].map(sub_look_up)
-            mask = idx_series.notna() & (df_substations_info["name"] != "Substation 1")
-            valid_substations = df_substations_info.loc[mask, "name"].to_numpy()
+            # Compute ground GIC for each key, using reduced Y_e
+            ig_cols = []
+            for k in v_keys:
+                ig_full = solve_total_nodal_gic(
+                    Y_e, nodal_voltages[k], non_zero_indices, n_nodes
+                )
+                ig_cols.append(ig_full)
+
+            ig_all = np.vstack(ig_cols).T
+
+            idx_series = df_ss_iter["name"].map(sub_look_up)
+            mask = idx_series.notna()
+            valid_substations = df_ss_iter.loc[mask, "name"].to_numpy()
             valid_indices = idx_series[mask].astype(int).to_numpy()
 
-            non_reduced_mat = np.zeros((n_nodes, ig_all.shape[1]), dtype=ig_all.dtype)
-            non_reduced_mat[non_zero_indices] = ig_all
-            gic_values_T = non_reduced_mat[valid_indices].T
+            gic_values_T = ig_all[valid_indices].T  # (K, n_valid_substations)
 
             data = {"Substation": valid_substations}
-            for col, vals in zip(v_cols, gic_values_T):
+            for col, vals in zip(v_keys, gic_values_T):
                 data[f"GIC_{col.split('V_')[1]}"] = vals
 
             pd.DataFrame(data).to_csv(out_path, index=False)
+            
+            del Y_e
+            gc.collect()
             continue
+
         else:
-            df_lines_copy = df_lines.copy()
+            df_lines_copy = df_lines_iter.copy()
             df_lines_copy["from_bus"] = df_lines_copy["from_bus"].apply(
                 lambda x: sub_look_up.get(x)
             )
@@ -872,27 +937,36 @@ def main(generate_grid_only=False, gannon_storm_only=False):
             if os.path.exists(filename_gic):
                 continue
 
-            Z_e = pre_compute_ze(Y_e)
+            v_keys = [
+                c
+                for c in v_cols
+                if (c in nodal_voltages) and (nodal_voltages[c] is not None)
+            ]
+            if not v_keys:
+                logger.error("No valid voltage keys for ground GIC.")
+                continue
+
+            ig_cols = []
+            for k in v_keys:
+                ig_full = solve_total_nodal_gic(
+                    Y_e, nodal_voltages[k], non_zero_indices, n_nodes
+                )
+                ig_cols.append(ig_full)
+
+            ig_all = np.vstack(ig_cols).T  # (n_nodes, K)
+            
             del Y_e
             gc.collect()
 
-            v_all = np.vstack([nodal_voltages[c] for c in v_cols])
-            ig_all = solve_total_nodal_gic_optimized(Z_e, v_all)
-
-            del Z_e
-            gc.collect()
-
-            idx_series = df_substations_info["name"].map(sub_look_up)
-            mask = idx_series.notna() & (df_substations_info["name"] != "Substation 1")
-            valid_substations = df_substations_info.loc[mask, "name"].to_numpy()
+            idx_series = df_ss_iter["name"].map(sub_look_up)
+            mask = idx_series.notna()
+            valid_substations = df_ss_iter.loc[mask, "name"].to_numpy()
             valid_indices = idx_series[mask].astype(int).to_numpy()
 
-            non_reduced_mat = np.zeros((n_nodes, ig_all.shape[1]), dtype=ig_all.dtype)
-            non_reduced_mat[non_zero_indices] = ig_all
-            gic_values_T = non_reduced_mat[valid_indices].T
+            gic_values_T = ig_all[valid_indices].T  # (K, n_valid_substations)
 
             data = {"Substation": valid_substations}
-            for col, vals in zip(v_cols, gic_values_T):
+            for col, vals in zip(v_keys, gic_values_T):
                 data[f"GIC_{col.split('V_')[1]}"] = vals
 
             pd.DataFrame(data).to_csv(filename_gic, index=False)
@@ -909,3 +983,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(gannon_storm_only=args.gannon_only)
+
+# %%

@@ -56,6 +56,7 @@ def calculate_effective_gic(gic_path, df_transformers, output_dir):
 
         df_result = df_meta.merge(df_pivot, on="Transformer")
 
+        # Calculate voltage ratios for multi-winding transformers
         multi_winding_mask = df_result["type"].isin(["Auto", "GY-GY", "GY-GY-D"])
         if multi_winding_mask.any():
             try:
@@ -78,6 +79,7 @@ def calculate_effective_gic(gic_path, df_transformers, output_dir):
                 logger.warning(f"Error calculating voltage ratios: {e}")
                 df_result.loc[multi_winding_mask, "v_ratio"] = 1.0
 
+        # Compute effective GIC based on transformer type
         for hazard_col in hazard_cols:
             hv_col = f"{hazard_col}_HV"
             lv_col = f"{hazard_col}_LV"
@@ -86,6 +88,7 @@ def calculate_effective_gic(gic_path, df_transformers, output_dir):
 
             effective_gic = pd.Series(index=df_result.index, dtype=float, data=np.nan)
 
+            # Single-winding: I_eff = I_HV
             single_mask = df_result["type"].isin(
                 ["GSU", "GSU w/ GIC BD", "GY-D", "GY-D w/ GIC BD"]
             )
@@ -95,6 +98,7 @@ def calculate_effective_gic(gic_path, df_transformers, output_dir):
                 )
                 effective_gic[single_mask] = hv_data
 
+            # Auto: I_eff = I_series + I_common * v_ratio
             auto_mask = df_result["type"] == "Auto"
             if (
                 auto_mask.any()
@@ -120,6 +124,7 @@ def calculate_effective_gic(gic_path, df_transformers, output_dir):
                     )
                 effective_gic[auto_mask] = series_data + (common_data * v_ratio_data)
 
+            # GY-GY: I_eff = I_HV + I_LV * v_ratio
             gy_mask = df_result["type"].isin(["GY-GY", "GY-GY-D"])
             if (
                 gy_mask.any()

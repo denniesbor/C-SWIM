@@ -20,12 +20,100 @@ import pandas as pd
 import xarray as xr
 from pysecs import SECS
 from scipy import signal
-from scipy.ndimage import gaussian_filter1d, uniform_filter1d
+from scipy.ndimage import uniform_filter1d
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, get_data_dir, LEAVE_OUT_SITES
 
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/storm_maxes.log")
+
+
+def read_usgs_accepted_sites():
+    file_path = DATA_LOC / "EMTF" / "USMTArray_unique_grid_points_1616_sites.txt"
+    """Read USGS accepted sites from a text file."""
+    try:
+        df = pd.read_csv(
+            file_path, header=None, names=["Station", "Latitude", "Longitude"]
+        )
+        logger.info(f"Loaded {len(df)} USGS accepted sites from {file_path}")
+        return df
+    except Exception as e:
+        logger.error(f"Error reading USGS accepted sites: {e}")
+        return pd.DataFrame()
+
+
+usgs_accepted_sites = read_usgs_accepted_sites()
+usgs_accepted_set = set(usgs_accepted_sites["Station"].str.upper().tolist())
+LOAD_NEW = (
+    True  # toggle to force reloading and processing emtf and transmission lines data
+)
+
+
+BAD_SITES = {"KSR32", "CAY09", "RER23"}
+
+# Adjustables
+MAX_ABS_Z = 100.0
+MIN_GOOD_PERIODS = 8
+
+
+def sanitize_site_variances(
+    site, max_abs_Z: float = MAX_ABS_Z, min_good_periods: int = MIN_GOOD_PERIODS
+):
+    """
+    Remove bad frequency bands (zero/neg/nonfinite variance, nonfinite Z, or |Z| too large).
+    Returns the site with arrays trimmed in-place, or None if too few good bands remain.
+    """
+    Z = np.asarray(site.Z)
+    if Z.ndim != 2:
+        return None
+
+    if not hasattr(site, "Z_var"):
+        return site
+    Z_var = np.asarray(site.Z_var)
+    if Z_var.shape != Z.shape:
+        return None
+
+    bad_var = ~np.isfinite(Z_var) | (Z_var <= 0.0)
+    bad_mag = ~np.isfinite(Z) | (np.abs(Z) > max_abs_Z)
+
+    bad_by_band = np.any(bad_var, axis=0) | np.any(bad_mag, axis=0)
+    keep = ~bad_by_band
+    n_keep = int(keep.sum())
+    n_total = keep.size
+
+    if n_keep < min_good_periods:
+        return None
+
+    def _mask_attr(obj, name):
+        if hasattr(obj, name):
+            A = np.asarray(getattr(obj, name))
+            if A.shape and A.shape[-1] == n_total:
+                setattr(obj, name, A[..., keep])
+
+    site.Z = Z[:, keep]
+    site.Z_var = Z_var[:, keep]
+    _mask_attr(site, "periods")
+    _mask_attr(site, "freqs")
+    for name in (
+        "Z_invsigcov",
+        "Z_residcov",
+        "T",
+        "T_var",
+        "T_invsigcov",
+        "T_residcov",
+        "coherence",
+        "multiple_coherence",
+    ):
+        _mask_attr(site, name)
+
+    dropped = np.flatnonzero(~keep)
+    if dropped.size:
+        logger.info(
+            f"[{site.name}] dropped bands idx={dropped.tolist()} "
+            f"(kept {n_keep}/{n_total})"
+        )
+
+    return site
 
 
 def process_xml_file(full_path):
@@ -34,9 +122,23 @@ def process_xml_file(full_path):
         site_name = os.path.basename(full_path).split(".")[1]
         site = bezpy.mt.read_xml(full_path)
 
-        if site.rating < 3:
-            logger.info(f"Skipped: {full_path} (Outside region or low rating)")
+        # If usgs accepted sites are available, filter based on them
+        if not usgs_accepted_sites.empty and site.name.upper() not in usgs_accepted_set:
+            logger.info(f"Skipped: {full_path} (Not in USGS accepted sites)")
             return None
+
+        # If USGS sites are not available, use quality filters / site ratings
+        if usgs_accepted_sites.empty:
+            if site.rating < 3:
+                logger.info(f"Skipped: {full_path} (Outside region or low rating)")
+                return None
+
+        if site.name.upper() in BAD_SITES:
+            cleaned = sanitize_site_variances(site)
+            if cleaned is None:
+                logger.info(f"Skipped: {full_path} (Too many bad bands after sanitize)")
+                return None
+            site = cleaned
 
         logger.info(f"Processed: {full_path}")
         return site
@@ -74,6 +176,12 @@ def process_sites(directory):
 
 def load_mt_sites(mt_sites_pickle, emtf_path):
     """Load MT sites from pickle file or process EMTF files."""
+
+    if LOAD_NEW:
+        if os.path.exists(mt_sites_pickle):
+            os.remove(mt_sites_pickle)
+            logger.info(f"Removed existing pickle file: {mt_sites_pickle}")
+
     if os.path.exists(mt_sites_pickle):
         with open(mt_sites_pickle, "rb") as pkl:
             return pickle.load(pkl)
@@ -86,6 +194,12 @@ def load_mt_sites(mt_sites_pickle, emtf_path):
 
 def read_transmission_lines(df_lines_EHV, trans_lines_pickle, site_xys):
     """Read transmission lines and setup Delaunay triangulation weights."""
+
+    if LOAD_NEW:
+        # Remove existing pickle to force reprocessing
+        if os.path.exists(trans_lines_pickle):
+            os.remove(trans_lines_pickle)
+            logger.info(f"Removed existing pickle file: {trans_lines_pickle}")
 
     if os.path.exists(trans_lines_pickle):
         with open(trans_lines_pickle, "rb") as pkl:
@@ -155,7 +269,9 @@ def load_data(start_date=None, end_date=None):
     df = read_transmission_lines(df_lines_EHV, trans_lines_pickle, site_xys)
 
     obs_dict = {
-        site.lower(): magnetic_data.sel(site=site) for site in magnetic_data.site.values
+        site.lower(): magnetic_data.sel(site=site)
+        for site in magnetic_data.site.values
+        if site.lower() not in [s.lower() for s in LEAVE_OUT_SITES]
     }
 
     return magnetic_data, MT_sites, df, storm_df, obs_dict, site_xys
@@ -223,7 +339,7 @@ def pick_peak_times(
     # |E| per site
     site_mag = np.sqrt(np.sum(E_pred**2, axis=2))  # [T, S]
 
-    # robust network metric S(t)
+    #  network metric S(t)
     if agg == "median":
         S = np.nanmedian(site_mag, axis=1)
     elif agg == "sum":
@@ -235,7 +351,7 @@ def pick_peak_times(
     m = max(1, int(round(smooth_minutes)))
     S_sm = uniform_filter1d(S, size=m, mode="nearest")
 
-    # peak picking
+    # Peak picking
     dist = max(1, int(round(min_separation_min)))  # minutes since 1 sample/min
     prom = max(1e-12, prominence_frac * np.nanmax(S_sm))
     peaks, props = signal.find_peaks(S_sm, distance=dist, prominence=prom)
@@ -243,7 +359,7 @@ def pick_peak_times(
     if peaks.size == 0:
         return [int(np.nanargmax(S_sm))]
 
-    # rank by smoothed height (or props['prominences']); take top_k
+    # rank by smoothed height
     order = np.argsort(S_sm[peaks])[::-1]
     sel = peaks[order[:top_k]]
     return sorted(map(int, sel))
@@ -326,7 +442,7 @@ def build_common_stack_from_obsdict(obs_dict, t0, t1):
 
 
 def calculate_maxes(
-    start_time, end_time, calcV=False, if_gannon=True, use_peaks=False, top_k=3
+    start_time, end_time, calcV=False, is_special=True, use_peaks=False, top_k=3
 ):
     """Calculate maximum values of magnetic and electric fields."""
 
@@ -339,6 +455,22 @@ def calculate_maxes(
 
     B_pred = calculate_SECS(B_obs, obs_xy, site_xys)
     logger.info(f"Done calculating magnetic fields: {time.time() - t0}")
+
+    bad_b_sites = []
+    for i, (lat, lon) in enumerate(site_xys):
+        b_xy = B_pred[:, i, :2]
+        reason = []
+        if np.isnan(b_xy).any():
+            reason.append("NaN in B_pred")
+        if np.isinf(b_xy).any():
+            reason.append("Inf in B_pred")
+        if np.allclose(b_xy, 0.0):
+            reason.append("all-zero B_pred")
+        if reason:
+            bad_b_sites.append((i, MT_sites[i].name, lat, lon, "; ".join(reason)))
+            logger.warning(
+                f"[SECS] {MT_sites[i].name} (idx {i}, lat={lat:.3f}, lon={lon:.3f}) -> {'; '.join(reason)}"
+            )
 
     site_maxB = np.max(np.sqrt(B_pred[:, :, 0] ** 2 + B_pred[:, :, 1] ** 2), axis=0)
 
@@ -382,8 +514,7 @@ def calculate_maxes(
 
     # Voltages
     if calcV:
-        if if_gannon or not use_peaks:
-            # Ground truth: per-minute, unsmoothed
+        if is_special or not use_peaks:
             logger.info("Calculating voltages (full per-minute series)...")
             arr_delaunay = np.zeros((Te, n_trans_lines))
             for i, tLine in enumerate(df.obj):
@@ -394,10 +525,9 @@ def calculate_maxes(
             logger.info(f"Done calculating voltages: {time.time() - t0}")
 
             # return full series only for Gannon
-            if if_gannon:
+            if is_special:
                 return (site_maxB, site_maxE, arr_delaunay, B_pred, E_pred)
         else:
-            # Speed mode: evaluate at selected peaks (still unsmoothed selection)
             peak_idxs = pick_peak_times(
                 E_pred,
                 smooth_minutes=None,
@@ -425,27 +555,12 @@ def calculate_maxes(
 
 def process_storm(args):
     """Process a single storm event."""
-    i, row, calcV, gannon_storm = args
-    try:
-        storm_times = (row["Start"], row["End"])
-        logger.info(f"Working on storm: {i + 1}")
-        maxB, maxE, maxV, B_pred, E_pred = calculate_maxes(
-            storm_times[0], storm_times[1], calcV, if_gannon=gannon_storm
-        )
-        return i, maxB, maxE, maxV, B_pred, E_pred
-    except Exception as e:
-        logger.error(f"Error processing storm {i + 1}: {e}")
-        return i, None, None, None, None, None
-
-
-def process_storm(args):
-    """Process a single storm event."""
-    i, row, calcV, gannon_storm = args
+    i, row, calcV, special_storm = args
     try:
         storm_times = (row["Start"], row["End"])
         logger.info(f"Working on storm: {i + 1}")
         i, maxB, maxE, maxV, B_pred, E_pred = i, *calculate_maxes(
-            storm_times[0], storm_times[1], calcV, if_gannon=gannon_storm
+            storm_times[0], storm_times[1], calcV, is_special=special_storm
         )
 
         mar0 = pd.Timestamp("1989-03-01 00:00:00")
@@ -469,13 +584,28 @@ def process_storm(args):
 
 
 def main():
+    """Main processing function for storm maximum calculations."""
     file_path = DATA_LOC / "storm_maxes"
     os.makedirs(file_path, exist_ok=True)
 
     maxB_file = file_path / "maxB_arr_testing_2.npy"
     maxE_file = file_path / "maxE_arr_testing_2.npy"
     maxV_file = file_path / "maxV_arr_testing_2.npy"
-    gannon_delaunay = file_path / "delaunay_v_gannon.npy"
+
+    def _is_special_storm(row):
+        """Check if storm is one of the special target storms."""
+        s, e = row["Start"], row["End"]
+        mar0 = pd.Timestamp("1989-03-01 00:00:00")
+        mar1 = pd.Timestamp("1989-03-31 23:59:59")
+        hal0 = pd.Timestamp("2003-10-27 00:00:00")
+        hal1 = pd.Timestamp("2003-11-01 23:59:59")
+        may24_0 = pd.Timestamp("2024-05-01 00:00:00")
+        may24_1 = pd.Timestamp("2024-05-31 23:59:59")
+        return (
+            (s <= mar1 and e >= mar0)
+            or (s <= hal1 and e >= hal0)
+            or (s <= may24_1 and e >= may24_0)
+        )
 
     site_xys = np.array([(site.latitude, site.longitude) for site in MT_sites])
     mt_site_names = [site.name for site in MT_sites]
@@ -485,7 +615,7 @@ def main():
     CALCULATE_VALUES = True
     if CALCULATE_VALUES:
         t0 = time.time()
-        logger.info(f"Starting to calculate storm maxes...")
+        logger.info("Starting to calculate storm maxes...")
 
         n_storms = len(storm_df)
         n_sites = len(site_xys)
@@ -494,7 +624,7 @@ def main():
         if os.path.exists(maxB_file) and os.path.exists(maxE_file):
             maxB_arr = np.load(maxB_file)
             maxE_arr = np.load(maxE_file)
-            logger.info(f"Loaded existing maxB and maxE arrays")
+            logger.info("Loaded existing maxB and maxE arrays")
         else:
             maxB_arr = np.zeros((n_sites, n_storms))
             maxE_arr = np.zeros((n_sites, n_storms))
@@ -507,9 +637,8 @@ def main():
         args = []
         for i, row in storm_df.iterrows():
             if np.all(maxB_arr[:, i] == 0):  # Only process unprocessed storms
-                # For storm 91 (Gannon), calculate full time series data
-                is_gannon = i == 91
-                args.append((i, row, calcV, is_gannon))
+                is_special = _is_special_storm(row)
+                args.append((i, row, calcV, is_special))
 
         logger.info(f"Processing {len(args)} remaining storms")
 
@@ -524,8 +653,24 @@ def main():
                 maxE_arr[:, i] = maxE
 
                 if calcV:
-                    if i == 91:  # Special handling for Gannon storm
-                        np.save(gannon_delaunay, maxV)  # Full time series
+                    if _is_special_storm(storm_df.loc[i]):  # Special storms (89, 03, 24, etc)
+                        # Save individual storm data
+                        if i == 91:
+                            storm_filename = file_path / "delaunay_v_gannon.npy"
+                        elif (
+                            storm_df.loc[i]["Start"].year == 1989
+                            and storm_df.loc[i]["Start"].month == 3
+                        ):
+                            storm_filename = file_path / "delaunay_v_march89.npy"
+                        elif (
+                            storm_df.loc[i]["Start"].year == 2003
+                            and storm_df.loc[i]["Start"].month == 10
+                        ):
+                            storm_filename = file_path / "delaunay_v_halloween2003.npy"
+                        else:
+                            storm_filename = file_path / f"delaunay_v_storm_{i}.npy"
+
+                        np.save(storm_filename, maxV)
                         maxV_arr[:, i] = np.nanmax(np.abs(maxV), axis=0)
                     else:
                         maxV_arr[:, i] = maxV
@@ -535,14 +680,28 @@ def main():
                 np.save(maxB_file, maxB_arr)
                 np.save(maxE_file, maxE_arr)
 
-                if i == 91:
-                    logger.info("Processing Gannon storm data...")
+                if _is_special_storm(storm_df.loc[i]):
+                    storm_name = "special storm"
+                    if i == 91:
+                        storm_name = "Gannon"
+                    elif (
+                        storm_df.loc[i]["Start"].year == 1989
+                        and storm_df.loc[i]["Start"].month == 3
+                    ):
+                        storm_name = "March 1989"
+                    elif (
+                        storm_df.loc[i]["Start"].year == 2003
+                        and storm_df.loc[i]["Start"].month == 10
+                    ):
+                        storm_name = "Halloween 2003"
 
-                    gannon_start = storm_df.loc[91, "Start"]
-                    gannon_end = storm_df.loc[91, "End"]
+                    logger.info(f"Processing {storm_name} storm data...")
+
+                    storm_start = storm_df.loc[i, "Start"]
+                    storm_end = storm_df.loc[i, "End"]
 
                     time_b = pd.date_range(
-                        start=gannon_start, periods=B_pred.shape[0], freq="60s"
+                        start=storm_start, periods=B_pred.shape[0], freq="60s"
                     )
                     T, Te = B_pred.shape[0], E_pred.shape[0]
                     trim = (T - Te) // 2
@@ -550,7 +709,7 @@ def main():
                     time_e = time_b[trim : trim + Te]
                     B_pred_xy = B_pred[trim : trim + Te, :, :2]
 
-                    ds_gannon = xr.Dataset(
+                    ds_special = xr.Dataset(
                         data_vars=dict(
                             B_pred=(("time", "site", "bcomp"), B_pred_xy),
                             E_pred=(("time", "site", "ecomp"), E_pred),
@@ -566,13 +725,112 @@ def main():
                         ),
                     )
 
-                    ds_gannon.to_netcdf(file_path / "ds_gannon.nc")
-                    logger.info("Gannon storm dataset saved to ds_gannon.nc")
+                    filename = f"ds_{storm_name.lower().replace(' ', '_')}.nc"
+                    ds_special.to_netcdf(file_path / filename)
+                    logger.info(f"{storm_name} storm dataset saved to {filename}")
 
                 logger.info(f"Processed and saved storm: {i + 1}")
 
         logger.info(f"Done calculating storm maxes: {time.time() - t0}")
         logger.info(f"Saved results to {file_path}")
+
+        try:
+            # A site is "usable" for bootstrap if it has at least one finite, nonzero max
+            # over all storms. We'll check both B and E, but E is the usual driver for TL.
+            okB = np.isfinite(maxB_arr) & (maxB_arr != 0)
+            okE = np.isfinite(maxE_arr) & (maxE_arr != 0)
+
+            validB_counts = okB.sum(axis=1)  # per-site counts
+            validE_counts = okE.sum(axis=1)
+
+            all_zero_or_nan_B = validB_counts == 0
+            all_zero_or_nan_E = validE_counts == 0
+
+            # Problematic for bootstrap if either B or E has no usable samples
+            problem_mask = all_zero_or_nan_B | all_zero_or_nan_E
+            problem_indices = np.where(problem_mask)[0]
+
+            # Log a compact summary and write a CSV for forensic checks
+            rows = []
+            for idx in problem_indices:
+                name = mt_site_names[idx] if idx < len(mt_site_names) else f"site_{idx}"
+                lat, lon = (float(site_xys[idx][0]), float(site_xys[idx][1]))
+                row = {
+                    "site_idx": int(idx),
+                    "name": name,
+                    "lat": lat,
+                    "lon": lon,
+                    "validB_count": int(validB_counts[idx]),
+                    "validE_count": int(validE_counts[idx]),
+                    "all_zero_or_nan_B": bool(all_zero_or_nan_B[idx]),
+                    "all_zero_or_nan_E": bool(all_zero_or_nan_E[idx]),
+                    "any_nan_B": bool(np.isnan(maxB_arr[idx]).any()),
+                    "any_nan_E": bool(np.isnan(maxE_arr[idx]).any()),
+                    "all_zero_B": bool(np.all(maxB_arr[idx] == 0)),
+                    "all_zero_E": bool(np.all(maxE_arr[idx] == 0)),
+                }
+                rows.append(row)
+                logger.warning(
+                    "[SITE DIAG] idx=%d name=%s lat=%.4f lon=%.4f "
+                    "validB=%d validE=%d allZeroOrNaN(B/E)=%s/%s anyNaN(B/E)=%s/%s allZero(B/E)=%s/%s",
+                    row["site_idx"],
+                    row["name"],
+                    row["lat"],
+                    row["lon"],
+                    row["validB_count"],
+                    row["validE_count"],
+                    row["all_zero_or_nan_B"],
+                    row["all_zero_or_nan_E"],
+                    row["any_nan_B"],
+                    row["any_nan_E"],
+                    row["all_zero_B"],
+                    row["all_zero_E"],
+                )
+
+            # Emit the exact list to logs (handy if it's a small set like 3)
+            if problem_indices.size > 0:
+                names_joined = ", ".join(
+                    f"{int(i)}:{mt_site_names[int(i)]}" for i in problem_indices
+                )
+                logger.error(
+                    "[SITE DIAG] Problematic sites (count=%d): %s",
+                    int(problem_indices.size),
+                    names_joined,
+                )
+            else:
+                logger.info(
+                    "[SITE DIAG] No problematic sites found (all have usable samples)."
+                )
+
+            # CSV artifact for later inspection
+            try:
+                diag_df = pd.DataFrame(rows)
+                diag_path = file_path / "problem_sites_summary.csv"
+                diag_df.to_csv(diag_path, index=False)
+                logger.info(
+                    "[SITE DIAG] Wrote CSV: %s (rows=%d)", str(diag_path), len(rows)
+                )
+            except Exception as _csv_exc:
+                logger.error(
+                    "[SITE DIAG] Failed to write problem_sites_summary.csv: %s",
+                    _csv_exc,
+                )
+
+            # Also, surface the TOP offenders by how empty they are (E first, then B)
+            # This helps if you want the exact three right in logs:
+            if problem_indices.size > 0:
+                # sites with 0 valid E, then sort by validB to break ties
+                order = np.lexsort((validB_counts, validE_counts))  # ascending
+                top = [int(i) for i in order[: min(3, len(order))]]
+                logger.error(
+                    "[SITE DIAG] Top-3 worst sites by (validE, then validB): %s",
+                    ", ".join(
+                        f"{i}:{mt_site_names[i]}(validE={int(validE_counts[i])},validB={int(validB_counts[i])})"
+                        for i in top
+                    ),
+                )
+        except Exception as _diag_exc:
+            logger.error("[SITE DIAG] diagnostics block failed: %s", _diag_exc)
 
 
 if __name__ == "__main__":

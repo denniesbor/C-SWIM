@@ -29,7 +29,7 @@ geomag_folder = data_dir / "geomag_data"
 
 nrcan_obs = ["blc", "cbb", "fcc", "mea", "ott", "res", "stj", "vic", "ykc"]
 
-# Observatory coordinates (longitude converted from 0-360 to -180-180)
+# Observatory coordinates
 nrcan_loc = {
     "ALE": {"latitude": 82.497, "longitude": 297.647},
     "BLC": {"latitude": 64.318, "longitude": 263.988},

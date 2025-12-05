@@ -16,7 +16,7 @@ from configs import setup_logger, get_data_dir
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/aggregate_gannon_gic.log")
 
-data_path = Path("/data/archives/nfs/spw-geophy/data")
+data_path = Path("/data/archives/nfs/spw-geophy/data") # wll need to set up your data path here
 ground_gic_folder = data_path / "gic" / "ground_gic"
 peak_times_path = DATA_LOC / "peak_times_1.npy"
 
@@ -40,7 +40,7 @@ def read_ground_gic_simulations(
     logger.info(f"Found {len(gnd_files)} ground GIC files in {ground_gic_folder}")
     peak_times = np.load(peak_times_path)
 
-    batch_size = 50
+    batch_size = 100
 
     def load_csv(file):
         try:
@@ -94,6 +94,7 @@ def read_ground_gic_simulations(
 
         batch_array = np.stack(batch_data, axis=0)
 
+        # Welford's online algorithm for running mean and variance
         if running_sum is None:
             running_sum = np.sum(batch_array, axis=0, dtype=np.float64)
             running_sum_sq = np.sum(batch_array**2, axis=0, dtype=np.float64)
@@ -103,6 +104,7 @@ def read_ground_gic_simulations(
 
         total_count += len(batch_data)
 
+        # Save intermediate results at checkpoints
         if total_count >= min(
             [sp for sp in save_points if sp > last_saved], default=float("inf")
         ):

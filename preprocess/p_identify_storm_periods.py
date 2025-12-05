@@ -230,7 +230,7 @@ def main():
     storm_df = storm_df[storm_df["Start"] > pd.to_datetime("1985-01-01")]
     storm_df.to_csv((kp_dst_path / "storm_periods.csv"), index=False)
 
-    visualize_storm_periods(dst_df, kp_df)
+    # visualize_storm_periods(dst_df, kp_df)
 
     # Greg Lucas method for storm identification
     kp_url = "https://kp.gfz-potsdam.de/kpdata?startdate=1980-01-01&enddate=2024-09-16&format=kp2#kpdatadownload-143"

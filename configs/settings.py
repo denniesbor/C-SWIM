@@ -12,14 +12,20 @@ APP_NAME = "gic_analysis"
 
 DEFAULT_DATA_DIR = Path("__file__").resolve().parent / "data"
 
-# Ground gic Dir - specify a dir with enough space ~ 300 GB for 200 sim
+# Leave out sites for current system model
+LEAVE_OUT_SITES = ["GUA", "HON"]  # as questioned by C Balch and advised by R Weigel
 
+# Ration of substations with blocking devices (BD)
+P_TRAFO_BD = 0.01
+
+# Ground gic Dir - specify a dir with enough space ~ 300 GB for 200 sim
 try:
     GROUND_GIC_DIR = Path("/data/archives/nfs/spw-geophy/data/gic/ground_gic")
     GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 except (FileNotFoundError, PermissionError):
     GROUND_GIC_DIR = DEFAULT_DATA_DIR / "gic" / "ground_gic"
     GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def get_data_dir(subdir=None):
     """Get data directory path, creating if needed."""
@@ -64,4 +70,4 @@ def setup_logger(name=APP_NAME, log_file=None, level=logging.INFO):
 
 
 # EHV cutoff voltage threshold (kV)
-cut_off_volt = 200
+cut_off_volt = 160  # All above 161 kV are considered EHV lines

@@ -6,14 +6,18 @@ Authors: Dennies and Ed
 """
 import os
 import pickle
+from random import seed
 
 import numpy as np
 import pandas as pd
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, get_data_dir, P_TRAFO_BD
 
 DATA_LOC = get_data_dir()
 logger = setup_logger(log_file="logs/build_adm_matrix.log")
+
+# Seed base
+seed_base = 42  # For reproducibility
 
 
 def process_substation_buses(DATA_LOC, evan_data=False):
@@ -234,7 +238,7 @@ def build_substation_buses(
     substation_buses = {}
 
     # Design low/high voltage buses using spatially intersected transmission lines and substations
-    # This approach allows for estimation of injection currents
+    # This approach allows for estimation of injection currents -- advised by CT Gaunt
     for i, row in unique_sub_voltage_pairs.iterrows():
         substation = row.substation
         line_voltage = row.voltage
@@ -458,63 +462,65 @@ def calculate_line_resistances(
 def get_transformer_samples(
     substation_buses,
     sample_net_name="admittance_matrix/sample_network.pkl",
-    n_samples=2000,
+    n_samples=3000,
     seed=42,
+    new_trafos=True,
 ):
-    """Generate monte carlo samples of substation-transformer compositions"""
-
+    """Generate Monte Carlo samples of substation-transformer compositions (no BD)."""
     data_path = DATA_LOC / sample_net_name
 
-    if os.path.exists(data_path):
+    if (not new_trafos) and os.path.exists(data_path):
         with open(data_path, "rb") as f:
             all_samples = pickle.load(f)
             logger.info(f"Loaded {len(all_samples)} samples")
-    else:
-        logger.info(f"Generating {n_samples} samples...")
-        np.random.seed(seed)
+        return all_samples
 
-        transformer_types_real = ["GY-GY", "GY-GY-D", "Auto"]
-        transformer_types_artificial = ["GY-D"]
+    logger.info(f"Generating {n_samples} samples...")
+    np.random.seed(seed)
 
-        all_samples = []
+    transformer_types_real = ["GY-GY", "GY-GY-D", "Auto"]
+    transformer_types_artificial = ["GY-D"]
 
-        for i in range(n_samples):
-            transformer_gen_num = 0
-            transformers_data = []
+    all_samples = []
+    for i in range(n_samples):
+        transformer_gen_num = 0
+        transformers_data = []
 
-            for sub_id, values in substation_buses.items():
-                lv_bus = values["lv_bus"]
-                is_artificial = lv_bus.endswith("_lv") or lv_bus.endswith("lv")
+        for sub_id, values in substation_buses.items():
+            lv_bus = values["lv_bus"]
+            is_artificial = lv_bus.endswith("_lv") or lv_bus.endswith("lv")
 
-                if is_artificial:
-                    trafo_count = np.random.randint(1, 3)  # 1 or 2 transformers
-                    available_types = transformer_types_artificial
-                else:
-                    trafo_count = np.random.randint(1, 4)  # 1 to 3 transformers
-                    available_types = transformer_types_real
+            if is_artificial:
+                trafo_count = np.random.randint(1, 3)  # 1 or 2
+                available_types = transformer_types_artificial
+                weights = [1.0]
+            else:
+                trafo_count = np.random.randint(1, 4)  # 1 to 3
+                available_types = transformer_types_real
+                weights = [1 / 3, 1 / 3, 1 / 3]
 
-                selected_types = np.random.choice(
-                    available_types, size=trafo_count, replace=True
+            selected_types = np.random.choice(
+                available_types, size=trafo_count, replace=True, p=weights
+            )
+
+            for transformer_type in selected_types:
+                transformer_gen_num += 1
+                transformers_data.append(
+                    {
+                        "sub_id": sub_id,
+                        "name": f"T_{sub_id}_{transformer_gen_num}",
+                        "type": transformer_type,
+                        "bus1_id": values["hv_bus"],
+                        "bus2_id": values["lv_bus"],
+                    }
                 )
 
-                for transformer_type in selected_types:
-                    transformer_gen_num += 1
-                    transformer_number = f"T_{sub_id}_{transformer_gen_num}"
+        all_samples.append(pd.DataFrame(transformers_data))
 
-                    transformer_data = {
-                        "sub_id": sub_id,
-                        "name": transformer_number,
-                        "type": transformer_type,
-                        "bus1_id": values["hv_bus"],  # Primary (high voltage)
-                        "bus2_id": values["lv_bus"],  # Secondary (low voltage)
-                    }
-                    transformers_data.append(transformer_data)
-
-            all_samples.append(pd.DataFrame(transformers_data))
-
-        with open(data_path, "wb") as f:
-            pickle.dump(all_samples, f)
-
+    os.makedirs(data_path.parent, exist_ok=True)
+    with open(data_path, "wb") as f:
+        pickle.dump(all_samples, f)
+    logger.info(f"Saved {len(all_samples)} samples")
     return all_samples
 
 
@@ -535,6 +541,7 @@ def random_admittance_matrix(
         "GY-GY": {"pri": 0.04, "sec": 0.06},
         "Auto": {"pri": 0.04, "sec": 0.06},
         "GSU": {"pri": 0.15, "sec": float("inf")},
+        "GSU w/ GIC BD": {"pri": 0.1, "sec": float("inf")},  # neutral DC-blocked
         "Tee": {"pri": 0.01, "sec": 0.01},
         "GY-D": {"pri": 0.05, "sec": float("inf")},
     }
@@ -718,18 +725,73 @@ def earthing_impedance(sub_look_up, substations_df):
 
     for i, row_sub in substations_df.iterrows():
         sub = row_sub["name"]
-
         index = sub_look_up.get(sub, None)
 
-        if index is None or sub == "Substation 1":
+        if index is None:
             continue
 
         Rg = row_sub.grounding_resistance
-        Y_rg = 1 / (3 * Rg)  # Divide by 3 to get admittance per phase
 
-        Y_e[index, index] = Y_rg
+        if np.isinf(Rg):
+            Y_e[index, index] = 0.0
+        else:
+            Y_rg = 1 / (3 * Rg)
+            Y_e[index, index] = Y_rg
 
     return Y_e
+
+
+def randomize_grounding_resistance(
+    df_substations_info,
+    low=0.1,
+    high=0.2,
+    seed=None,
+    skip=(),
+    p_open=0.01,
+):
+    """Randomly assign grounding resistances; optionally set a p_open share to ∞."""
+    rng = np.random.default_rng(seed)
+    out = df_substations_info.copy()
+
+    if "grounding_resistance" not in out.columns:
+        out["grounding_resistance"] = np.nan
+    out["name"] = out["name"].astype(str)
+
+    # all substations eligible unless caller passes a non-empty `skip`
+    mask = ~out["name"].isin(set(skip))
+    n_eligible = int(mask.sum())
+    if n_eligible == 0:
+        return out
+
+    out.loc[mask, "grounding_resistance"] = rng.uniform(low, high, size=n_eligible)
+
+    k = int(np.floor(p_open * n_eligible))
+    if k > 0:
+        eligible_idx = np.flatnonzero(mask)
+        open_idx = rng.choice(eligible_idx, size=k, replace=False)
+        out.loc[open_idx, "grounding_resistance"] = np.inf
+
+    return out
+
+
+def apply_random_line_dc_blocking(df_lines, p_block=0.15, seed=None):
+    """Randomly apply DC blocking to a fraction of transmission lines."""
+    rng = np.random.default_rng(seed)
+    out = df_lines.copy()
+    if "dc_block" not in out.columns:
+        out["dc_block"] = False
+
+    sel = rng.random(len(out)) < float(p_block)
+    idx = np.flatnonzero(sel).astype(np.int64)
+
+    if idx.size:
+        out.loc[idx, "dc_block"] = True
+        out.loc[idx, "R"] = np.inf
+        vcols = [c for c in out.columns if c.startswith("V_")]
+        if vcols:
+            out.loc[idx, vcols] = 0.0
+
+    return out
 
 
 if __name__ == "__main__":
@@ -745,16 +807,19 @@ if __name__ == "__main__":
 
     for i, df_transformer in enumerate(df_transformers):
         logger.info(f"Building admittance matrix {i + 1}...")
+
         Y, Y_e, df_transformers = random_admittance_matrix(
             substation_buses,
             df_transformer,
             bus_ids_map,
             sub_look_up,
             df_lines,
-            substations_df,
+            df_transformer,
         )
         logger.info(f"Max value in Y: {np.max(Y)}")
         logger.info(f"Min value in Y: {np.min(Y)}")
         admittances.append(Y)
         logger.info(f"Admittance matrix of shape {Y.shape} built for sample {i + 1}.")
         break
+
+# %%

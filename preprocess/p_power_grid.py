@@ -132,7 +132,6 @@ def load_and_process_substations(substations_data_path, ferc_gdf_path):
         ):
             substations_gdf[expected_col] = substations_gdf[osm_col]
 
-    # Ensure required columns exist with defaults if necessary
     required_cols = ["SS_NAME", "SS_OPERATOR", "SS_VOLTAGE", "SS_TYPE"]
     for col in required_cols:
         if col not in substations_gdf.columns:
@@ -174,7 +173,7 @@ def prepare_substations_for_grid_analysis(substation_gdf):
         if col not in substation_gdf.columns:
             substation_gdf[col] = default
 
-    # Handle geometry conversion if needed
+    # Handle geometry conversion
     try:
         assert all(substation_gdf.geometry.geom_type == "Point")
     except AssertionError:
@@ -268,7 +267,7 @@ def get_nodes_edges(
     ss_point_col: str = "geometry_right",
 ):
     """Build topology dictionaries from spatial intersection."""
-    # Project to equal area for accurate measurements
+    # Project to equal area
     tl_p = tl_gdf.to_crs(proj_crs)
     ss_p = ss_gdf.to_crs(proj_crs)
 
@@ -290,7 +289,6 @@ def get_nodes_edges(
     sub2volts = defaultdict(list)
     line2subs = defaultdict(list)
 
-    # Build basic mappings
     for ss, lid, v in tl_gdf[["SS_ID", "LINE_ID", "LINE_VOLTAGE"]].itertuples(False):
         if lid not in sub2lines[ss]:
             sub2lines[ss].append(lid)
@@ -301,7 +299,6 @@ def get_nodes_edges(
     sub2subs = defaultdict(list)
     line_pairs = {}
 
-    # Track warnings
     warning_count = 0
     problematic_pairs = []
 
@@ -436,7 +433,7 @@ def _split_multi_sub_lines(tl_gdf_subset, pair_map, substation_gdf):
     ss_pt = dict(zip(ss_p["SS_ID"], ss_p["rep_point"]))
 
     recs_keep_original = []  # Lines with 2 substations (keep original ID)
-    recs_split = []  # Lines with 3+ substations (new IDs)
+    recs_split = []  # Lines with 3 + substations (new IDs)
 
     for lid, pairs in pair_map.items():
         if not pairs:
