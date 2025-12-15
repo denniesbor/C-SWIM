@@ -1,5 +1,6 @@
-# SWEEP-GRID: Space Weather Engineering & Economic Pipeline for the U.S. Grid
+# C-SWIM: Coupled Space Weather Impact Modeling
 A Coupled Physics–Engineering–Economic Pipeline for Impact Assessment of Extreme Space Weather
+
 ## Summary
 
 This repository provides a reproducible pipeline that (1) collects and preprocesses geomagnetic and grid datasets, (2) derives extreme geoelectric field scenarios statistically, (3) builds a geospatial/electrical admittance model of the extra-high voltage (EHV) grid, (4) simulates geomagnetically induced currents (GIC) under synthetic and historical storms, and (5) exports outputs for downstream socio-economic and reliability impact modeling (handled in the separate [`spwio`](https://github.com/denniesbor/spwio/) repository).
