@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="C-SWIM-Logo.png" alt="C-SWIM Logo" width="400"/>
+</p>
+
 # C-SWIM: Coupled Space Weather Impact Modeling
 A Coupled Physics–Engineering–Economic Pipeline for Impact Assessment of Extreme Space Weather
 
