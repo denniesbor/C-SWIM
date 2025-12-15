@@ -6,16 +6,17 @@ Authors: Dennies and Oughton
 import os
 import pickle
 import gc
+import threading
 
 import rasterio
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 from rasterio.windows import Window
-from rasterio.io import MemoryFile
 from shapely.geometry import box
 from tobler.dasymetric import masked_area_interpolate
-from osgeo import gdal
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from preprocess.p_econ_data import (
     load_socioeconomic_data,
@@ -28,26 +29,57 @@ from preprocess.p_econ_data import (
 )
 from configs import setup_logger, get_data_dir, DENNIES_DATA_LOC
 
+os.environ.setdefault("GDAL_CACHEMAX", "256")
+os.environ.setdefault("CPL_VSIL_CURL_CACHE_SIZE", "0")
+
 DATA_LOC = get_data_dir()
 raw_data_folder = DATA_LOC / "raw_econ_data"
 processed_econ_dir = DATA_LOC / "processed_econ"
 land_mask_dir = DATA_LOC / "land_mask"
-nlcd_aea_path = land_mask_dir / "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
-out_dir = land_mask_dir / "tiles"
+
+USE_COARSE = True
+COARSE_SINGLE = land_mask_dir / "coarse" / "nlcd_coarse_mask.tif"
+COARSE_TILES = land_mask_dir / "tiles"
+COARSE_IS_BINARY = True
+
+out_dir = land_mask_dir / "coarse_interpolation_tiles"
 tile_rows, tile_cols = 8, 8
-jobs = 1
+max_workers = 4
+raster_open_limit = 3
 
 logger = setup_logger(log_file="logs/raster_interpolation.log")
 
+_z_sindex = None
+_v_sindex = None
 
-def divide_raster_into_bbox(path, n_rows, n_cols):
-    """Divides a raster into a grid of bounding boxes for tiled processing."""
-    logger.info(f"Dividing raster into {n_rows}x{n_cols} grid")
+_rio_gate = threading.BoundedSemaphore(raster_open_limit)
+
+
+def _gpkg_looks_complete(fp):
+    try:
+        if not fp.exists():
+            return False
+        if fp.stat().st_size < 32768:
+            return False
+        with open(fp, "rb") as f:
+            return b"SQLite format 3\000" in f.read(16)
+    except Exception:
+        return False
+
+
+def _choose_raster_for_grid():
+    if USE_COARSE and COARSE_SINGLE.exists():
+        return COARSE_SINGLE
+    return land_mask_dir / "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
+
+
+def divide_raster_into_bbox(n_rows, n_cols):
+    src_path = _choose_raster_for_grid()
+    logger.info(f"Dividing raster into {n_rows}x{n_cols} grid: {src_path}")
     bboxes = []
-    with rasterio.open(path) as src:
+    with rasterio.open(src_path) as src:
         H, W = src.height, src.width
         h_step, w_step = H // n_rows, W // n_cols
-
         for i in range(n_rows):
             for j in range(n_cols):
                 r0, c0 = i * h_step, j * w_step
@@ -63,75 +95,135 @@ def divide_raster_into_bbox(path, n_rows, n_cols):
                         "width": int(win.width),
                     }
                 )
-
     logger.info(f"Created {len(bboxes)} bounding boxes")
-    return bboxes
+    return src_path, bboxes
 
 
-def mask_to_vsimem(mask_arr, transform, crs, idx):
-    """Creates an in-memory raster mask for use with GDAL virtual filesystem."""
-    mem = MemoryFile()
-    with mem.open(
-        driver="GTiff",
-        height=mask_arr.shape[0],
-        width=mask_arr.shape[1],
-        count=1,
-        dtype="uint8",
-        crs=crs,
-        transform=transform,
-        nodata=0,
-    ) as dst:
-        dst.write(mask_arr, 1)
-    vsipath = f"/vsimem/built_mask_{idx}.tif"
-    gdal.FileFromMemBuffer(vsipath, mem.read())
-    return vsipath
-
-
-def interpolate_chunk(bbox, idx, pbar=None):
-    """Performs dasymetric interpolation for a single raster tile."""
-    try:
-        if pbar:
-            pbar.set_description(f"Reading raster data for tile {idx}")
-
-        with rasterio.open(nlcd_aea_path) as src:
+def _mask_from_coarse_single(coarse_path, bbox):
+    with _rio_gate:
+        with rasterio.open(coarse_path) as src:
             arr = src.read(1, window=bbox["window"])
             trs = bbox["transform"]
             crs = src.crs
+            nodata = src.nodata if src.nodata is not None else 0
 
-        if arr.size == 0 or np.all(arr == 0):
-            logger.warning(f"Chunk {idx} has no valid data, skipping")
-            return None
+    if arr.size == 0:
+        return None, None, None
 
-        if pbar:
-            pbar.set_description(f"Creating mask for tile {idx}")
+    if COARSE_IS_BINARY:
+        mask = (arr != 0).astype("uint8")
+    else:
+        mask = np.isin(arr, np.array([21, 22, 23, 24], dtype=arr.dtype)).astype("uint8")
+        if mask.sum() == 0:
+            mask = (arr != nodata).astype("uint8")
 
-        mask = np.isin(arr, [21, 22, 23, 24]).astype("uint8")
-        del arr
+    return mask, trs, crs
 
-        vsipath = mask_to_vsimem(mask, trs, crs, idx)
-        del mask
 
-        if pbar:
-            pbar.set_description(f"Filtering spatial data for tile {idx}")
+def interpolate_chunk(bbox, idx, grid_raster_path):
+    try:
+        if USE_COARSE:
+            coarse_tile_fp = COARSE_TILES / f"tile_{idx}.tif"
+            if coarse_tile_fp.exists():
+                vsipath = str(coarse_tile_fp)
+                with rasterio.open(vsipath) as src:
+                    trs = src.transform
+                    crs = src.crs
+                    arr = src.read(1)
+                if arr.size == 0 or np.all(arr == 0):
+                    logger.debug(f"Chunk {idx} coarse tile has no valid pixels")
+                    return None
+            else:
+                mask, trs, crs = _mask_from_coarse_single(grid_raster_path, bbox)
+                if mask is None or mask.sum() == 0:
+                    logger.debug(f"Chunk {idx} has no valid pixels (coarse single)")
+                    return None
+                os.makedirs(out_dir, exist_ok=True)
+                mask_fp = out_dir / f"mask_tile_{idx}.tif"
+                if not mask_fp.exists():
+                    with rasterio.open(
+                        mask_fp,
+                        "w",
+                        driver="GTiff",
+                        height=mask.shape[0],
+                        width=mask.shape[1],
+                        count=1,
+                        dtype="uint8",
+                        crs=crs,
+                        transform=trs,
+                        nodata=0,
+                        tiled=True,
+                        compress="LZW",
+                    ) as dst:
+                        dst.write(mask, 1)
+                vsipath = str(mask_fp)
+                del mask
+        else:
+            with _rio_gate:
+                with rasterio.open(grid_raster_path) as src:
+                    arr = src.read(1, window=bbox["window"])
+                    trs = bbox["transform"]
+                    crs = src.crs
+                    nodata = src.nodata if src.nodata is not None else 0
+            if arr.size == 0:
+                logger.debug(f"Chunk {idx} empty raster window")
+                return None
+            mask = np.isin(arr, np.array([21, 22, 23, 24], dtype=arr.dtype)).astype(
+                "uint8"
+            )
+            if mask.sum() == 0:
+                mask = (arr != nodata).astype("uint8")
+                if mask.sum() == 0:
+                    logger.debug(f"Chunk {idx} has no valid pixels")
+                    return None
+            os.makedirs(out_dir, exist_ok=True)
+            mask_fp = out_dir / f"mask_tile_{idx}.tif"
+            if not mask_fp.exists():
+                with rasterio.open(
+                    mask_fp,
+                    "w",
+                    driver="GTiff",
+                    height=mask.shape[0],
+                    width=mask.shape[1],
+                    count=1,
+                    dtype="uint8",
+                    crs=crs,
+                    transform=trs,
+                    nodata=0,
+                    tiled=True,
+                    compress="LZW",
+                ) as dst:
+                    dst.write(mask, 1)
+            vsipath = str(mask_fp)
+            del mask, arr
 
         x0, y1 = trs[2], trs[5]
         x1 = x0 + bbox["width"] * trs[0]
         y0 = y1 + bbox["height"] * trs[4]
         zone = box(x0, y0, x1, y1)
 
-        zs = zcta_5070[zcta_5070.intersects(zone)].copy()
-        vs = voronoi_5070[voronoi_5070.intersects(zone)].copy()
+        z_idx = list(_z_sindex.query(zone)) if _z_sindex is not None else []
+        v_idx = list(_v_sindex.query(zone)) if _v_sindex is not None else []
 
+        zs = (zcta_aea.iloc[z_idx] if z_idx else zcta_aea).copy()
+        vs = (voronoi_aea.iloc[v_idx] if v_idx else voronoi_aea).copy()
+
+        zs = zs[zs.intersects(zone)]
+        vs = vs[vs.intersects(zone)]
         if zs.empty or vs.empty:
-            logger.warning(f"Chunk {idx} has no data, skipping")
-            gdal.Unlink(vsipath)
+            logger.debug(f"Chunk {idx} empty after clip (zs={len(zs)}, vs={len(vs)})")
             return None
 
-        zs = zs.set_index("ZCTA", drop=False)
-        vs = vs.set_index("sub_id", drop=False)
+        id_col = (
+            "sub_id"
+            if "sub_id" in vs.columns
+            else ("name" if "name" in vs.columns else None)
+        )
+        if id_col is None:
+            raise RuntimeError("Voronoi polygons missing both 'sub_id' and 'name'.")
 
-        if pbar:
-            pbar.set_description(f"Running interpolation for tile {idx}")
+        zs = zs.set_index("ZCTA", drop=False)
+        vs = vs.set_index(id_col, drop=False)
 
         res = masked_area_interpolate(
             raster=vsipath,
@@ -142,8 +234,6 @@ def interpolate_chunk(bbox, idx, pbar=None):
             pixel_values=[1],
             allocate_total=True,
         )
-
-        gdal.Unlink(vsipath)
         del zs, vs
         return res
 
@@ -153,14 +243,10 @@ def interpolate_chunk(bbox, idx, pbar=None):
 
 
 def load_processed_data():
-    """Loads and prepares spatial economic data for interpolation processing."""
     processed_file = land_mask_dir / "interpolation_data.pkl"
-
     logger.info("Processing interpolation data")
 
-    # Try to load from consolidated pipeline first
     processed_econ_file = processed_econ_dir / "socioeconomic_data.pkl"
-
     if processed_econ_file.exists():
         logger.info("Loading from consolidated economic data pipeline")
         with open(processed_econ_file, "rb") as f:
@@ -175,59 +261,42 @@ def load_processed_data():
     else:
         logger.warning(f"Processed economic data not found at {processed_econ_file}")
         logger.info("Running consolidated economic data pipeline...")
-
-        # Run the consolidated pipeline directly
-        logger.info("=" * 50)
-        logger.info("PHASE 1: RAW DATA PROCESSING")
-        logger.info("=" * 50)
-
         os.makedirs(processed_econ_dir, exist_ok=True)
-
         zcta_pop_20 = create_zcta_population_csv(raw_data_folder)
-        state_gdp_empl_pop = create_state_gdp_employment_data(raw_data_folder)
+        _ = create_state_gdp_employment_data(raw_data_folder)
         df_naics_zcta = create_naics_establishments_data(raw_data_folder)
         zcta_within_rto = create_zcta_within_rto(raw_data_folder)
         naics_est_gdp = create_naics_est_gdp2022_zcta_csv(
             raw_data_folder, df_naics_zcta, zcta_within_rto
         )
-
-        # Step 2: Process for analysis
-        logger.info("=" * 50)
-        logger.info("PHASE 2: ANALYSIS DATA PREPARATION")
-        logger.info("=" * 50)
-
         regions_pop_df, zcta_business_gdf, states_gdf, df_other = (
             load_socioeconomic_data(naics_est_gdp, zcta_pop_20)
         )
-
-        # Step 4: Save processed data
-        logger.info("=" * 50)
-        logger.info("PHASE 4: SAVING PROCESSED DATA")
-        logger.info("=" * 50)
-
-        result = (
-            naics_est_gdp,
-            zcta_pop_20,
-            regions_pop_df,
-            zcta_business_gdf,
-            states_gdf,
-            df_other,
-        )
         with open(processed_econ_file, "wb") as f:
-            pickle.dump(result, f)
-
-        logger.info("=" * 50)
-        logger.info("ECONOMIC PIPELINE COMPLETED SUCCESSFULLY")
+            pickle.dump(
+                (
+                    naics_est_gdp,
+                    zcta_pop_20,
+                    regions_pop_df,
+                    zcta_business_gdf,
+                    states_gdf,
+                    df_other,
+                ),
+                f,
+            )
         logger.info(f"Saved processed data to: {processed_econ_file}")
 
-    # Step 3: Create Voronoi polygons
-    logger.info("=" * 50)
-    logger.info("PHASE 3: SPATIAL DATA PROCESSING")
-    logger.info("=" * 50)
+    grid_raster_path = _choose_raster_for_grid()
+    with rasterio.open(grid_raster_path) as _src:
+        raster_crs = _src.crs
+        logger.info(f"Raster for grid: {grid_raster_path}")
+        logger.info(f"Raster bounds: {_src.bounds}")
 
     df_substation = pd.read_csv(
         DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
     )
+    if "name" not in df_substation.columns:
+        raise RuntimeError("substation_info.csv missing 'name' column.")
     ehv_coordinates = dict(
         zip(
             df_substation["name"],
@@ -237,36 +306,60 @@ def load_processed_data():
 
     voronoi_gdf = create_voronoi_polygons(ehv_coordinates, states_gdf)
 
-    zcta_5070 = zcta_business_gdf.to_crs(epsg=5070)
-    voronoi_5070 = voronoi_gdf.to_crs(epsg=5070)
+    zcta_aea = zcta_business_gdf.to_crs(raster_crs)
+    voronoi_aea = voronoi_gdf.to_crs(raster_crs)
 
-    economic_cols = [
-        c for c in zcta_5070.columns if c.startswith("GDP_") or c.startswith("EST_")
-    ]
-    if "POP20" in zcta_5070.columns:
+    if "sub_id" in voronoi_aea.columns:
+        voronoi_aea["sub_id"] = voronoi_aea["sub_id"].astype(str)
+    elif "name" in voronoi_aea.columns:
+        voronoi_aea["name"] = voronoi_aea["name"].astype(str)
+    else:
+        raise RuntimeError("Voronoi polygons missing both 'sub_id' and 'name'.")
+
+    logger.info(f"ZCTA bounds: {zcta_aea.total_bounds}")
+    logger.info(f"Voronoi bounds: {voronoi_aea.total_bounds}")
+
+    group_keys = (
+        "AGR",
+        "MINING",
+        "UTIL_CONST",
+        "MANUF",
+        "TRADE_TRANSP",
+        "INFO",
+        "FIRE",
+        "PROF_OTHER",
+        "EDUC_ENT",
+        "G",
+    )
+    economic_cols = [f"GDP_{k}" for k in group_keys] + [f"EST_{k}" for k in group_keys]
+    economic_cols = [c for c in economic_cols if c in zcta_aea.columns]
+    if "POP20" in zcta_aea.columns:
         economic_cols.append("POP20")
+    logger.info(f"econ cols: {len(economic_cols)} -> {economic_cols[:8]}...")
 
-    result = (zcta_5070, voronoi_5070, economic_cols)
+    global _z_sindex, _v_sindex
+    _z_sindex = zcta_aea.sindex
+    _v_sindex = voronoi_aea.sindex
 
-    os.makedirs(land_mask_dir, exist_ok=True)
     with open(processed_file, "wb") as f:
-        pickle.dump(result, f)
+        pickle.dump((zcta_aea, voronoi_aea, economic_cols, str(grid_raster_path)), f)
 
     logger.info("Saved processed interpolation data")
-    return result
+    return zcta_aea, voronoi_aea, economic_cols, str(grid_raster_path)
 
 
-def main(start_tile=33, end_tile=64):
-    """Main processing function that performs tiled raster interpolation."""
+def main(start_tile=0, end_tile=None, overwrite=False):
     logger.info(f"Starting raster interpolation from tile {start_tile}")
 
-    global zcta_5070, voronoi_5070, economic_cols
-    zcta_5070, voronoi_5070, economic_cols = load_processed_data()
+    global zcta_aea, voronoi_aea, economic_cols
+    zcta_aea, voronoi_aea, economic_cols, grid_raster_path = load_processed_data()
 
     os.makedirs(out_dir, exist_ok=True)
 
-    bboxes = divide_raster_into_bbox(nlcd_aea_path, tile_rows, tile_cols)
-
+    grid_path, bboxes = _ = (
+        _choose_raster_for_grid(),
+        divide_raster_into_bbox(tile_rows, tile_cols)[1],
+    )
     if end_tile is None or end_tile > len(bboxes):
         end_tile = len(bboxes)
 
@@ -274,26 +367,39 @@ def main(start_tile=33, end_tile=64):
         f"Processing tiles {start_tile} through {end_tile} (out of {len(bboxes)} total)"
     )
 
-    tile_range = range(start_tile, end_tile + 1)
+    if not economic_cols:
+        logger.error("No economic columns found. Exiting.")
+        return
 
-    with tqdm(tile_range, desc="Processing tiles", unit="tile") as pbar:
-        for idx in pbar:
-            bb = bboxes[idx - 1]
-            fp = out_dir / f"tile_{idx}.gpkg"
+    tile_range = list(range(start_tile, end_tile + 1))
 
-            pbar.set_description(f"Processing tile {idx}")
-            out = interpolate_chunk(bb, idx, pbar)
+    def _run_tile(idx):
+        fp = out_dir / f"tile_{idx}.gpkg"
+        if not overwrite and _gpkg_looks_complete(fp):
+            logger.info(f"Tile {idx} already exists and looks valid; skipping")
+            return str(fp)
 
-            if out is None:
-                pbar.set_description(f"Tile {idx} empty, skipping")
-                continue
+        bb = bboxes[idx - 1]
+        out = interpolate_chunk(bb, idx, grid_raster_path)
+        if out is None:
+            return None
 
-            pbar.set_description(f"Saving tile {idx}")
-            out.to_file(fp, driver="GPKG")
+        tmp_fp = out_dir / f"tile_{idx}_tmp.gpkg"
+        out.to_file(tmp_fp, driver="GPKG", layer=f"tile_{idx}")
+        os.replace(tmp_fp, fp)
 
-            del out
-            gc.collect()
+        del out
+        gc.collect()
+        logger.info(f"Saved tile {idx} -> {fp}")
+        return str(fp)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [ex.submit(_run_tile, i) for i in tile_range]
+        for _ in tqdm(as_completed(futs), total=len(futs), unit="tile"):
+            pass
+
+    logger.info("Raster interpolation complete")
 
 
 if __name__ == "__main__":
-    main()
+    main(overwrite=False)

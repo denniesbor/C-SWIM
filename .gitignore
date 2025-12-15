@@ -52,3 +52,30 @@ log/
 *.swp
 *.swo
 .DS_Store
+
+# Notebooks dir
+notebooks/
+.notebooks/
+.ipynb_checkpoints/
+# Jupyter Notebook files
+*.ipynb
+
+# ignore pycache inside dirs
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+junk/
+
+# igfnre cmpresed fol;es
+*.zip
+*.tar.gz
+*.tar.giz
+*.tar.bz2
+*.7z
+*.rar
+*.gz
+*.xz
+*.tar
+
+# Test.py
+test.py

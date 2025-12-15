@@ -4,7 +4,6 @@ Author: Dennies Bor & Edward Oughton
 """
 
 import os
-
 import warnings
 import pickle
 import gc
@@ -29,7 +28,7 @@ logger = setup_logger(log_file="logs/p_econ_data.log")
 
 
 def read_text_file(file_path):
-    """Reads large text/csv files with encoding error handling for compressed data."""
+    """Reads large text/csv files with encoding error handling."""
     logger.debug(f"Reading text file: {file_path}")
     with open(file_path, encoding="utf-8", errors="ignore") as file:
         content = file.read()
@@ -38,7 +37,7 @@ def read_text_file(file_path):
 
 
 def create_zcta_population_csv(data_loc: Path):
-    """Processes and cleans 2020 decennial census population data at ZCTA level."""
+    """Processes 2020 decennial census population data at ZCTA level."""
     logger.info("Creating ZCTA population data")
     zcta_pop_20 = read_text_file(data_loc / "pop_2020_zcta.csv")
 
@@ -151,7 +150,7 @@ def create_state_gdp_employment_data(data_loc: Path):
 
 
 def create_zcta_within_rto(data_loc: Path):
-    """Spatially joins ZCTA polygons with NERC transmission regions using representative points."""
+    """Spatially joins ZCTA polygons with NERC transmission regions."""
     logger.info("Creating ZCTA within RTO spatial mapping")
     rto_gdf = gpd.read_file(data_loc / "NERC Map" / "electricity_operators.shp")
 
@@ -222,7 +221,7 @@ def create_zcta_within_rto(data_loc: Path):
 def create_naics_est_gdp2022_zcta_csv(
     data_loc: Path, df_naics_zcta: pd.DataFrame, zcta_within_rto: pd.DataFrame
 ):
-    """Calculates ZCTA-level GDP by proportionally allocating state GDP based on establishment counts."""
+    """Calculates ZCTA-level GDP by allocating state GDP based on establishment counts."""
     logger.info("Creating NAICS EST GDP dataset with GDP calculations")
     df_naics_regions = df_naics_zcta.merge(
         zcta_within_rto[["REGIONS", "ZCTA"]], on="ZCTA"
@@ -317,24 +316,27 @@ def create_naics_est_gdp2022_zcta_csv(
 
 
 def aggregate_economic_columns(df, economic_cols):
-    """Aggregates detailed NAICS codes into broader industry sector categories."""
+    """Aggregates detailed NAICS codes into broader industry sectors."""
     missing_cols = [col for col in economic_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing columns: {missing_cols}")
 
     result_df = df.copy()
+    logger.info(
+        f"Aggregating economic columns into broader sectors.. {result_df.columns.tolist()}"
+    )
 
     industry_groups = {
         "AGR": ["11"],
         "MINING": ["21"],
         "UTIL_CONST": ["22", "23"],
-        "MANUF": ["31"],
+        "MANUF": ["31", "32", "33"],
         "TRADE_TRANSP": ["42", "44", "48"],
         "INFO": ["51"],
-        "FIRE": ["FIRE"],
-        "PROF_OTHER": ["PROF", "81"],
-        "EDUC_ENT": ["6", "7"],
-        "G": ["G"],
+        "FIRE": ["52", "53"],
+        "PROF_OTHER": ["54", "55", "56", "81"],
+        "EDUC_ENT": ["61", "62", "71", "72"],
+        "G": ["92", "UNCLFD"],
     }
 
     for prefix in ["GDP_", "EST_"]:
@@ -371,7 +373,7 @@ def aggregate_economic_columns(df, economic_cols):
 
 
 def load_socioeconomic_data(data_naics_zcta, population_df):
-    """Transforms long-format NAICS data into wide-format GeoDataFrame with optimized data types."""
+    """Transforms long-format NAICS data into wide-format GeoDataFrame."""
     logger.info("Processing socioeconomic data")
 
     regions = data_naics_zcta[["ZCTA", "REGIONS", "STABBR"]].drop_duplicates()
@@ -455,8 +457,15 @@ def load_socioeconomic_data(data_naics_zcta, population_df):
 def create_voronoi_polygons(
     sub_coordinates: Dict[str, Tuple[float, float]], states_gdf
 ) -> gpd.GeoDataFrame:
-    """Creates Voronoi polygons for substation coordinates and clips them to continental US boundaries."""
+    """Creates Voronoi polygons for substation coordinates and clips to continental US."""
     voronoi_file = processed_voronoi_dir / "voronoi_polygons_clipped.geojson"
+
+    if voronoi_file.exists():
+        logger.info(
+            f"Voronoi polygons already exist at {voronoi_file}. Loading existing file."
+        )
+        voronoi_gdf = gpd.read_file(voronoi_file)
+        return voronoi_gdf
 
     logger.info("Creating Voronoi polygons")
     coords = list(sub_coordinates.values())
@@ -501,7 +510,6 @@ def create_voronoi_polygons(
 if __name__ == "__main__":
     logger.info("Starting consolidated economic data pipeline")
 
-    # Step 1: Process raw data
     logger.info("=" * 50)
     logger.info("PHASE 1: RAW DATA PROCESSING")
     logger.info("=" * 50)
@@ -516,7 +524,6 @@ if __name__ == "__main__":
         raw_data_folder, df_naics_zcta, zcta_within_rto
     )
 
-    # Step 2: Process for analysis
     logger.info("=" * 50)
     logger.info("PHASE 2: ANALYSIS DATA PREPARATION")
     logger.info("=" * 50)
@@ -525,7 +532,6 @@ if __name__ == "__main__":
         naics_est_gdp, zcta_pop_20
     )
 
-    # Step 3: Create Voronoi polygons
     logger.info("=" * 50)
     logger.info("PHASE 3: SPATIAL DATA PROCESSING")
     logger.info("=" * 50)
@@ -542,7 +548,6 @@ if __name__ == "__main__":
 
     voronoi_gdf = create_voronoi_polygons(ehv_coordinates, states_gdf)
 
-    # Step 4: Save processed data
     logger.info("=" * 50)
     logger.info("PHASE 4: SAVING PROCESSED DATA")
     logger.info("=" * 50)

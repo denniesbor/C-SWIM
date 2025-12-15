@@ -8,26 +8,19 @@ Provides utilities for:
 """
 
 import os
+from pickle import TRUE
 import sys
 import logging
 from pathlib import Path
 
-# Application name - used for the logger
 APP_NAME = "spwio"
 
-# Path settings
 DEFAULT_DATA_DIR = Path("__file__").resolve().parent / "data"
 
-# =============================================================================
-# GIC Processing Configuration
-# =============================================================================
-
-# Scenario configuration
 USE_ALPHA_BETA_SCENARIO = (
-    False  # Set to True to use LUCY's GIC MAX PRED WITH ALPHA AND BETA FACTORS
+    os.getenv("USE_ALPHA_BETA_SCENARIO", "false").lower() == "true"
 )
 
-# Alpha-beta scenarios (uncertainty-quantified GIC predictions)
 ALPHA_BETA_SCENARIOS = [
     "gic_75yr_conf_68_lower",
     "gic_75yr_mean_prediction",
@@ -55,7 +48,6 @@ ALPHA_BETA_SCENARIOS = [
     "gic_250yr_conf_68_upper",
 ]
 
-# Regular scenarios (original approach)
 REGULAR_SCENARIOS = [
     "e_75-year-hazard A/ph",
     "e_gannon-year-hazard A/ph",
@@ -69,7 +61,6 @@ REGULAR_SCENARIOS = [
     "e_225-year-hazard A/ph",
 ]
 
-# Economic sector columns
 GDP_COLUMNS = [
     "GDP_AGR",
     "GDP_MINING",
@@ -96,43 +87,51 @@ EST_COLUMNS = [
     "EST_G",
 ]
 
-# Data processing configuration
 DROP_COLUMNS = ["n_samples", "n_substations", "total_pop"]
 CSV_DTYPES = {"sub_id": "category"}
 
-# Simulation parameters
-DEFAULT_THETA0 = 75.0  # Default fragility parameter
-DEFAULT_TOLERANCE = 0.1  # Convergence tolerance for simulations
-DEFAULT_MAX_ITERATIONS = 20000  # Maximum simulation iterations
-DEFAULT_BATCH_SIZE = 2000  # Batch size for vectorized operations
-DEFAULT_SAVE_BATCH_SIZE = 50  # Files per processing batch
-
+DEFAULT_THETA0 = 75.0
+DEFAULT_TOLERANCE = 0.1
+DEFAULT_MAX_ITERATIONS = 20000
+DEFAULT_BATCH_SIZE = 2000
+DEFAULT_SAVE_BATCH_SIZE = 50
 
 DENNIES_DATA_LOC = Path("/home/pve_ubuntu/spw-geophy-io/data")
 IPOPT_EXEC = "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"
 
-# File paths for alpha-beta scenario
 ALPHA_BETA_GIC_FILE = (
-    DENNIES_DATA_LOC / "/regression" / "substations_with_gic_uncertainty.geojson"
+    DENNIES_DATA_LOC / "regression" / "substations_with_gic_uncertainty_scaled.geojson"
 )
 
-# Regular GIC file directories
-GIC_DIRECTORIES = [
+EFF_GIC_DIR = [
     DENNIES_DATA_LOC / "gic_eff",
     "~/ubuntu/archives/spw-geophy/data/final_gic/gic_eff",
 ]
 
-# Output file configurations
+GND_GIC_DIR = [
+    DENNIES_DATA_LOC / "gnd_gic",
+    "~/ubuntu/archives/spw-geophy/data/final_gic/gnd_gic",
+]
+
+PROCESS_GND_FILES = False
+
 OUTPUT_FILES = {
     "alpha_beta_uncertainty": "scenario_summary_alpha_beta_uncertainty.nc",
     "alpha_beta_regular": "scenario_summary_alpha_beta.nc",
-    "regular_all": "scenario_summary_all_v2.nc",
+    "regular_all": (
+        "scenario_summary_gnd_gic.nc"
+        if PROCESS_GND_FILES
+        else "scenario_summary_eff_gic.nc"
+    ),
     "vulnerable_alpha_beta_uncertainty": "vulnerable_substations_alpha_beta_uncertainty.parquet",
     "vulnerable_alpha_beta_regular": "vulnerable_substations_alpha_beta.parquet",
-    "vulnerable_regular": "vulnerable_substations",
+    "vulnerable_regular": (
+        "vulnerable_substations_gnd_gic"
+        if PROCESS_GND_FILES
+        else "vulnerable_substations_eff_gic"
+    ),
 }
 
-# Figures DIR
 FIGURES_DIR = Path("__file__").resolve().parent / "figures"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -154,9 +153,7 @@ def get_simulation_config():
 
 
 def get_data_dir(subdir=None):
-    """
-    Get the path to a data directory, creating it if it doesn't exist.
-    """
+    """Get the path to a data directory, creating it if it doesn't exist."""
     if subdir:
         data_dir = DEFAULT_DATA_DIR / subdir
     else:
@@ -167,31 +164,23 @@ def get_data_dir(subdir=None):
 
 
 def setup_logger(name=APP_NAME, log_file=None, level=logging.INFO):
-    """
-    Set up a custom logger with console and optional file output.
-    """
-    # Create logger
+    """Set up a custom logger with console and optional file output."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Remove existing handlers if present
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    # Create formatter
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Create file handler if requested
     if log_file:
-        # Ensure the log directory exists
         log_path = Path(log_file)
         if not log_path.parent.exists():
             log_path.parent.mkdir(parents=True, exist_ok=True)

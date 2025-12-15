@@ -28,7 +28,8 @@ from .settings import (
     DEFAULT_SAVE_BATCH_SIZE,
     # File paths and configurations
     ALPHA_BETA_GIC_FILE,
-    GIC_DIRECTORIES,
+    EFF_GIC_DIR,
+    GND_GIC_DIR,
     OUTPUT_FILES,
     DENNIES_DATA_LOC,
     FIGURES_DIR,
@@ -36,6 +37,7 @@ from .settings import (
     # Helper functions
     get_scenarios,
     get_simulation_config,
+    PROCESS_GND_FILES,
 )
 
 __all__ = [
@@ -60,7 +62,8 @@ __all__ = [
     "DEFAULT_SAVE_BATCH_SIZE",
     # File paths and configurations
     "ALPHA_BETA_GIC_FILE",
-    "GIC_DIRECTORIES",
+    "EFF_GIC_DIR",
+    "GND_GIC_DIR",
     "OUTPUT_FILES",
     "DENNIES_DATA_LOC",
     "FIGURES_DIR",
@@ -68,4 +71,5 @@ __all__ = [
     # Helper functions
     "get_scenarios",
     "get_simulation_config",
+    "PROCESS_GND_FILES",
 ]

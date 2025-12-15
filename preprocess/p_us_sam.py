@@ -18,9 +18,7 @@ sam_output_dir = DATA_LOC / "sam"
 
 
 def preprocess_use_table(file_path: str) -> pd.DataFrame:
-    """
-    Load and clean the BEA Use Table.
-    """
+    """Load and clean the BEA Use Table."""
     data = pd.read_csv(file_path)
     data.columns = [
         col if not col.startswith("Unnamed:") else "code" for col in data.columns
@@ -62,14 +60,12 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
     ]
     sam = pd.DataFrame(0.0, index=sam_accounts, columns=sam_accounts)
 
-    # Activity-to-activity
     for paying_group, paying_cols in industry_groups.items():
         for receiving_group, receiving_cols in industry_groups.items():
             sam.loc[receiving_group, paying_group] = (
                 use_df.loc[receiving_cols, paying_cols].sum().sum()
             )
 
-    # Factors (Value Added)
     factor_map = {"V001": "LAB", "V003": "CAP"}
     for factor_code, factor in factor_map.items():
         for activity, cols in industry_groups.items():
@@ -77,18 +73,15 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
                 use_df.loc[(factor_code, slice(None)), cols].sum().sum()
             )
 
-    # Other product taxes less subsidies (excluding import duties)
     for activity, codes in industry_groups.items():
         product_taxes = supply_df.loc[codes, "TOP"].sum()
         subsidies = supply_df.loc[codes, "SUB"].sum()
         sam.at["IDT", activity] = product_taxes - subsidies
 
-    # Add other production taxes
     for activity, codes in industry_groups.items():
         production_tax = use_df.loc["T00OTOP", codes].sum().sum()
         sam.at["IDT", activity] += production_tax
 
-    # Final demand
     fd_map = {
         "HOH": ["F010"],
         "GOV": ["F100"],
@@ -99,23 +92,18 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
         for activity, cols in industry_groups.items():
             sam.at[activity, inst] = use_df.loc[cols, fd_codes].sum().sum()
 
-    # Imports from supply table
     for activity, codes in industry_groups.items():
         sam.at["EXT", activity] = supply_df.loc[codes, "MCIF"].sum()
 
-    # Import tariffs from supply table
     for activity, codes in industry_groups.items():
         sam.at["IDT", activity] += supply_df.loc[(codes, slice(None)), "MDTY"].sum()
 
-    # Taxes and tariffs to government
     sam.at["GOV", "IDT"] = sam.loc["IDT"].sum()
     sam.at["GOV", "TRF"] = sam.loc["TRF"].sum()
 
-    # Factors to households
     sam.at["HOH", "LAB"] = sam.loc["LAB"].sum()
     sam.at["HOH", "CAP"] = sam.loc["CAP"].sum()
 
-    # from external accounts
     add_data_path = DATA_LOC / "add_data"
 
     def load_and_clean_csv(file_name, skiprows, desc_col_index=1):
@@ -129,7 +117,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
     def get_average_of_last_four(row):
         return row.iloc[-4:].astype(float).mean() * 1000
 
-    # 1. Direct taxes
     tax_data = load_and_clean_csv("personal_current_tax_payments.csv", skiprows=3)
     direct_tax = (
         tax_data[
@@ -138,7 +125,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
         * 1000
     )
 
-    # 2. Government transfers
     transfers_data = load_and_clean_csv("govt_transfers.csv", skiprows=3)
     transfers = (
         transfers_data[
@@ -149,7 +135,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
         * 1000
     )
 
-    # 3. Household savings
     savings_data = load_and_clean_csv("personal_income_and_disp.csv", skiprows=4)
     savings_row = savings_data[
         savings_data.iloc[:, 1].str.contains("Personal saving", na=False)
@@ -159,7 +144,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
         f"Household savings: {total_savings} million (average of quarterly values)"
     )
 
-    # 4. Government deficit
     govt_data = load_and_clean_csv("gov_receipts_expenditures.csv", skiprows=4)
     receipts_row = govt_data[
         govt_data.iloc[:, 1].str.contains("Current receipts", na=False)
@@ -174,7 +158,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
         f"Government deficit: {govt_deficit} million (based on average quarterly values)"
     )
 
-    # 5. Trade deficit
     trade_data = load_and_clean_csv(
         "Foreign_Transactions_National_Income_and_Product_Accounts.csv", skiprows=1
     )
@@ -206,7 +189,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
     except KeyError as e:
         logger.error(f"SAM update failed: {e}")
 
-    # Remove subsidy in agric to part of govt payments to agric
     subsidy_amount = abs(sam.at["TRF", "AGR"])
     sam.at["TRF", "AGR"] = 0
     if (
@@ -218,7 +200,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
     else:
         sam.at["AGR", "GOV"] = subsidy_amount
 
-    # Remove subsidy in govt to part of govt payments
     subsidy_amount = abs(sam.at["TRF", "G"])
     sam.at["TRF", "G"] = 0
     if "G" in sam.index and "GOV" in sam.columns and not pd.isna(sam.at["G", "GOV"]):
@@ -226,7 +207,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
     else:
         sam.at["G", "GOV"] = subsidy_amount
 
-    # Handle negative investment in agric
     if "AGR" in sam.index and "INV" in sam.columns and sam.at["AGR", "INV"] < 0:
         neg_inv = abs(sam.at["AGR", "INV"])
         sam.at["AGR", "INV"] = 0
@@ -241,7 +221,6 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
                 share = sam.at[sector, "INV"] / total_pos_inv
                 sam.at[sector, "INV"] -= neg_inv * share
 
-    # Adjust trade deficit
     try:
         trade_deficit_bea = trade_deficit
         trade_deficit_sam = sam.loc["EXT", :].sum() - sam.loc[:, "EXT"].sum()
@@ -257,9 +236,7 @@ def make_sam_accounts(use_tb_path, sup_tb_path):
 def balance_and_save_sam(
     sam, output_path="output/us_balanced_sam.csv", decimal_places=1
 ):
-    """
-    Balance a SAM and save it to a CSV file.
-    """
+    """Balance a SAM and save it to a CSV file."""
     output_path = Path(output_path)
     os.makedirs(output_path.parent, exist_ok=True)
     balanced_sam = balance_sam(sam, decimal_places=decimal_places)
@@ -274,14 +251,10 @@ if __name__ == "__main__":
     sup_tb_path = tables_dir / "supply_tables.csv"
 
     sam = make_sam_accounts(use_tb_path, sup_tb_path)
-    print("SAM before balancing:")
-    print(sam)
 
     balanced_sam = balance_and_save_sam(
         sam, sam_output_dir / "us_balanced_sam.csv", decimal_places=1
     )
-    print("Balanced SAM:")
-    print(balanced_sam)
 
     logger.info(f"Original row sums: {sam.sum(axis=1).sum()}")
     logger.info(f"Original column sums: {sam.sum(axis=0).sum()}")
