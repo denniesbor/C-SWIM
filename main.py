@@ -206,7 +206,7 @@ def run_preprocess():
             "preprocess.p_econ_data",
             "preprocess.downsample_nlcd",
             "preprocess.p_areal_intp",
-            "preprocess.p_gic_eff",
+            "preprocess.p_gic_files",
             "preprocess.p_technology",
             "preprocess.p_us_sam",
         ]
