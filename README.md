@@ -2,14 +2,14 @@
   <img src="C-SWIM-Logo.png" alt="C-SWIM Logo" width="400"/>
 </p>
 
-# C-SWIM: Coupled Space Weather Impact Modeling
+# C-SWIM: Coupled Space Weather Impact Model
 A Coupled Physics–Engineering–Economic Pipeline for Impact Assessment of Extreme Space Weather
 
 ## Summary
 
 This repository provides a reproducible pipeline that (1) collects and preprocesses geomagnetic and grid datasets, (2) derives extreme geoelectric field scenarios statistically, (3) builds a geospatial/electrical admittance model of the extra-high voltage (EHV) grid, (4) simulates geomagnetically induced currents (GIC) under synthetic and historical storms, and (5) exports outputs for downstream socio-economic and reliability impact modeling (handled in the separate [`spwio`](https://github.com/denniesbor/spwio/) repository).
 
-This work builds upon the foundational geoelectric hazard analysis framework developed by Lucas et al. (2020) for 100-year return period assessments of the U.S. high-voltage power grid.
+This work builds upon the foundational geoelectric hazard analysis framework developed by Lucas et al. (2020) for 100-year return period assessments. We then extend this approach to the substation-level for the U.S. high-voltage power grid, and integrate estimates for the potential socio-economic impacts.
 
 **Related Publication:** Oughton, E. J., Bor, D. K., Weigel, R., Gaunt, C. T., Dogan, R., Huang, L., Love, J. J., & Wiltberger, M. (2024). Major Space Weather Risks Identified via Coupled Physics-Engineering-Economic Modeling. *arXiv preprint* arXiv:2412.18032.
 
