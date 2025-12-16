@@ -11,7 +11,7 @@ This repository provides a reproducible pipeline that (1) collects and preproces
 
 This work builds upon the foundational geoelectric hazard analysis framework developed by Lucas et al. (2020) for 100-year return period assessments of the U.S. high-voltage power grid.
 
-**Related Publication:** Oughton, E. J., et al. (2024). A physics-engineering-economic model coupling approach for estimating the socio-economic impacts of space weather scenarios. *arXiv preprint* arXiv:2412.18032.
+**Related Publication:** Oughton, E. J., Bor, D. K., Weigel, R., Gaunt, C. T., Dogan, R., Huang, L., Love, J. J., & Wiltberger, M. (2024). Major Space Weather Risks Identified via Coupled Physics-Engineering-Economic Modeling. *arXiv preprint* arXiv:2412.18032.
 
 ---
 
