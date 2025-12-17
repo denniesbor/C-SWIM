@@ -536,9 +536,7 @@ if __name__ == "__main__":
     logger.info("PHASE 3: SPATIAL DATA PROCESSING")
     logger.info("=" * 50)
 
-    df_substation = pd.read_csv(
-        DATA_DIR / "admittance_matrix" / "substation_info.csv"
-    )
+    df_substation = pd.read_csv(DATA_DIR / "admittance_matrix" / "substation_info.csv")
     ehv_coordinates = dict(
         zip(
             df_substation["name"],

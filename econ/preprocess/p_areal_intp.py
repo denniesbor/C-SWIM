@@ -292,9 +292,7 @@ def load_processed_data():
         logger.info(f"Raster for grid: {grid_raster_path}")
         logger.info(f"Raster bounds: {_src.bounds}")
 
-    df_substation = pd.read_csv(
-        DATA_DIR / "admittance_matrix" / "substation_info.csv"
-    )
+    df_substation = pd.read_csv(DATA_DIR / "admittance_matrix" / "substation_info.csv")
     if "name" not in df_substation.columns:
         raise RuntimeError("substation_info.csv missing 'name' column.")
     ehv_coordinates = dict(

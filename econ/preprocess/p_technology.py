@@ -21,22 +21,22 @@ def preprocess_use_table(file_path: str) -> pd.DataFrame:
     Load and clean the BEA Use Table, converting values to billions of dollars.
     """
     data = pd.read_csv(file_path)
-    
+
     # Clean header names
     data.columns = [
         col if not col.startswith("Unnamed:") else "code" for col in data.columns
     ]
-    
+
     if "code" in data.columns and "Commodities/Industries" in data.columns:
         data = data.set_index(["code", "Commodities/Industries"])
 
     # Handle BEA specific null markers and formatting
     data = data.map(lambda x: str(x).strip().replace("---", "0"))
     data = data.apply(pd.to_numeric, errors="coerce").fillna(0)
-    
+
     # Scale to billions
     data = data / 1000
-    
+
     return data
 
 
@@ -58,7 +58,7 @@ def clean_gross_output_file(input_path, output_path):
 
 def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector"):
     """
-    Create production technology matrices from BEA input-output data 
+    Create production technology matrices from BEA input-output data
     aggregated into 10 major sectors.
     """
     # Sector aggregation mapping
@@ -108,10 +108,7 @@ def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector
 
     # Aggregate Gross Output Vector
     X_big = (
-        output_row.rename(index=code2grp)
-        .groupby(level=0)
-        .sum()
-        .reindex(groups.keys())
+        output_row.rename(index=code2grp).groupby(level=0).sum().reindex(groups.keys())
     )
 
     # Calculate A Matrix (Direct Requirements): A = U / X
@@ -139,7 +136,7 @@ def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector
 
     # Export results
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     A_big.to_csv(output_dir / "direct_requirements.csv")
     X_big.to_csv(output_dir / "gross_output.csv", header=["2023"])
     VA_big.to_csv(output_dir / "value_added.csv")
@@ -161,8 +158,7 @@ def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector
 if __name__ == "__main__":
     # Pre-clean the raw gross output file
     clean_gross_output_file(
-        G_OUTPUT_DIR / "gross_output.csv", 
-        G_OUTPUT_DIR / "cleaned_gross_output.csv"
+        G_OUTPUT_DIR / "gross_output.csv", G_OUTPUT_DIR / "cleaned_gross_output.csv"
     )
 
     # Generate matrices
