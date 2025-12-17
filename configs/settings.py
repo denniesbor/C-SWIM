@@ -16,12 +16,9 @@ DATA_DIR = ROOT_DIR / "data"
 ECON_DATA_DIR = DATA_DIR / "econ_data"
 DEFAULT_DATA_DIR = ECON_DATA_DIR
 
-try:
-    GROUND_GIC_DIR = Path("/data/archives/nfs/spw-geophy/data/gic/ground_gic")
-    GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
-except (FileNotFoundError, PermissionError):
-    GROUND_GIC_DIR = DATA_DIR / "gic" / "ground_gic"
-    GROUND_GIC_DIR.mkdir(parents=True, exist_ok=True)
+# Gannon ground GIC (minute cadence, large files ~300GB)
+GANNON_GND_GIC_DIR = DATA_DIR / "gannon_gnd_gic"
+GANNON_GND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 
 FIGURES_DIR = ROOT_DIR / "figures"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,10 +38,8 @@ EFF_GIC_DIR = [
     DATA_DIR / "final_gic" / "gic_eff",
 ]
 
-GND_GIC_DIR = [
-    DATA_DIR / "gnd_gic",
-    DATA_DIR / "final_gic" / "gnd_gic",
-]
+GND_GIC_DIR =  DATA_DIR / "gnd_gic"
+
 
 ADMITTANCE_DIR = DATA_DIR / "admittance_matrix"
 

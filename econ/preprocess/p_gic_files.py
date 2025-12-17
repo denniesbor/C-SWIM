@@ -52,8 +52,6 @@ device = None
 
 
 def _get_device():
-    import torch
-
     global device
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -516,15 +514,12 @@ def main():
         gic_files = []
 
         if PROCESS_GND_FILES:
-            for gic_dir_str in GND_GIC_DIR:
-                gic_dir = Path(gic_dir_str).expanduser()
-                files = sorted(gic_dir.glob("ground_gic*.csv"))
-                if files:
-                    gic_files.extend(files)
-                    logger.info(f"Found {len(files)} ground_gic files in: {gic_dir}")
-                    break
-                else:
-                    logger.warning(f"No gnd_gic files found in: {gic_dir}")
+            files = sorted(GND_GIC_DIR.glob("ground_gic*.csv"))
+            if files:
+                gic_files.extend(files)
+                logger.info(f"Found {len(files)} ground_gic files in: {GND_GIC_DIR}")
+            else:
+                logger.warning(f"No gnd_gic files found in: {GND_GIC_DIR}")
         else:
             for gic_dir_str in EFF_GIC_DIR:
                 gic_dir = Path(gic_dir_str).expanduser()

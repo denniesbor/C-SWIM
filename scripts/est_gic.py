@@ -36,7 +36,7 @@ from build_admittance_matrix import (
     apply_random_line_dc_blocking,
 )
 
-from configs import setup_logger, get_data_dir, GROUND_GIC_DIR
+from configs import setup_logger, get_data_dir, GANNON_GND_GIC_DIR
 
 logger = setup_logger(log_file="logs/gic_calculation.log")
 
@@ -692,7 +692,7 @@ def main(generate_grid_only=False, gannon_storm_only=False):
             continue
 
         out_path = (
-            GROUND_GIC_DIR / f"ground_gic_gannon_{i}.csv"
+            GANNON_GND_GIC_DIR / f"ground_gic_gannon_{i}.csv"
             if gannon_storm_only
             else processed_gic_path / f"winding_gic_rand_{i}.csv"
         )
