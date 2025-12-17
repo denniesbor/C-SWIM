@@ -19,7 +19,7 @@ logger = setup_logger(log_file="logs/aggregate_gannon_gic.log")
 data_path = Path(
     "/data/archives/nfs/spw-geophy/data"
 )  # wll need to set up your data path here
-ground_gic_folder = Path(GROUND_GIC_DIR)    
+ground_gic_folder = Path(GROUND_GIC_DIR)
 peak_times_path = DATA_LOC / "peak_times_1.npy"
 
 

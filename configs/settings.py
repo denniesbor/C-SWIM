@@ -169,12 +169,12 @@ def get_simulation_config():
 def get_data_dir(subdir=None, econ=False):
     """Get data directory path, creating if needed."""
     base = ECON_DATA_DIR if econ else DATA_DIR
-    
+
     if subdir:
         data_dir = base / subdir
     else:
         data_dir = base
-    
+
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 

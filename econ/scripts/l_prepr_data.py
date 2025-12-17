@@ -209,7 +209,7 @@ def load_and_process_gic_data(df_lines):
         gannon_e = f["events/gannon/E"][:] / 1000
         gannon_b = f["events/gannon/B"][:]
         gannon_v = f["events/gannon/V"][:]
-        
+
         hydro_quebec_e = f["events/hydro_quebec/E"][:] / 1000
         hydro_quebec_b = f["events/hydro_quebec/B"][:]
         hydro_quebec_v = f["events/hydro_quebec/V"][:]
@@ -252,8 +252,13 @@ def load_and_process_gic_data(df_lines):
         v_fields,
         gannon_e,
         v_cols,
-        halloween_e, st_patricks_e, hydro_quebec_e,
-        gannon_b, halloween_b, st_patricks_b, hydro_quebec_b
+        halloween_e,
+        st_patricks_e,
+        hydro_quebec_e,
+        gannon_b,
+        halloween_b,
+        st_patricks_b,
+        hydro_quebec_b,
     )
 
 
