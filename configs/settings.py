@@ -40,7 +40,6 @@ EFF_GIC_DIR = [
 
 GND_GIC_DIR =  DATA_DIR / "gnd_gic"
 
-
 ADMITTANCE_DIR = DATA_DIR / "admittance_matrix"
 
 # Economic analysis settings

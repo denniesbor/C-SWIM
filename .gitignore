@@ -69,3 +69,14 @@ tmp/
 tva_application.ipynb
 viz/
 data/gannon_gnd_gic/
+
+# Ignore zst files
+*.zst
+# Ignore tar files
+*.tar
+*.tar.gz
+*.tgz
+# Ignore zip files
+*.zip
+*.rar
+*.7z
