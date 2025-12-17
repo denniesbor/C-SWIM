@@ -96,12 +96,13 @@ DEFAULT_MAX_ITERATIONS = 20000
 DEFAULT_BATCH_SIZE = 2000
 DEFAULT_SAVE_BATCH_SIZE = 50
 
+# Need to set this (this is )
 DENNIES_DATA_LOC = Path("/home/pve_ubuntu/spw-geophy-io/data")
 IPOPT_EXEC = "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"
 
 ALPHA_BETA_GIC_FILE = (
     DENNIES_DATA_LOC / "regression" / "substations_with_gic_uncertainty_scaled.geojson"
-)
+)                                                                                                                                                                                                                                                                                                                               
 
 EFF_GIC_DIR = [
     DENNIES_DATA_LOC / "gic_eff",
