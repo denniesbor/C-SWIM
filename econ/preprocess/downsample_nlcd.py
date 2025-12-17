@@ -13,9 +13,9 @@ from rasterio.enums import Resampling
 from rasterio.windows import Window
 from rasterio.transform import Affine
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, ECON_DATA_DIR
 
-DATA_LOC = get_data_dir()
+DATA_LOC = ECON_DATA_DIR
 land_mask_dir = DATA_LOC / "land_mask"
 in_raster = land_mask_dir / "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 

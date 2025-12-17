@@ -51,10 +51,12 @@ import numpy as np
 import pandas as pd
 from numpy.linalg import solve
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, ECON_DATA_DIR
+
+DATA_LOC = ECON_DATA_DIR
 
 logger = setup_logger("InputOutputModel")
-DATA_LOC = get_data_dir()
+DATA_LOC = ECON_DATA_DIR
 
 
 class InputOutputModel:

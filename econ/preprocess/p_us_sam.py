@@ -7,12 +7,12 @@ import pandas as pd
 import numpy as np
 import os
 from pathlib import Path
-from preprocess.sam_balancer import balance_sam
+from econ.preprocess.sam_balancer import balance_sam
 
 from configs import setup_logger, get_data_dir
 
 logger = setup_logger("US SAM Builder")
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 tables_dir = DATA_LOC / "supply_use_tables"
 sam_output_dir = DATA_LOC / "sam"
 

@@ -32,14 +32,14 @@ from configs import (
     EFF_GIC_DIR,
     GND_GIC_DIR,
     OUTPUT_FILES,
-    DENNIES_DATA_LOC,
+    DATA_DIR,
     PROCESS_GND_FILES,
 )
-from scripts.l_prepr_data import load_and_aggregate_tiles
+from econ.scripts.l_prepr_data import load_and_aggregate_tiles
 
 warnings.filterwarnings("ignore")
 
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger(log_file="logs/p_gic_files_gpu")
 _rng = default_rng(seed=42)
 
@@ -207,7 +207,7 @@ def process_gic_file(df: pd.DataFrame) -> pd.DataFrame:
         df["sub_id"] = df["sub_id"].astype(str)
 
         df_substation = pd.read_csv(
-            DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
+            DATA_DIR / "admittance_matrix" / "substation_info.csv"
         )
 
         df_substation["name"] = df_substation["name"].astype(str)

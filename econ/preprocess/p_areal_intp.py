@@ -18,7 +18,7 @@ from tobler.dasymetric import masked_area_interpolate
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from preprocess.p_econ_data import (
+from econ.preprocess.p_econ_data import (
     load_socioeconomic_data,
     create_voronoi_polygons,
     create_zcta_population_csv,
@@ -27,12 +27,12 @@ from preprocess.p_econ_data import (
     create_zcta_within_rto,
     create_naics_est_gdp2022_zcta_csv,
 )
-from configs import setup_logger, get_data_dir, DENNIES_DATA_LOC
+from configs import setup_logger, get_data_dir, DATA_DIR
 
 os.environ.setdefault("GDAL_CACHEMAX", "256")
 os.environ.setdefault("CPL_VSIL_CURL_CACHE_SIZE", "0")
 
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 raw_data_folder = DATA_LOC / "raw_econ_data"
 processed_econ_dir = DATA_LOC / "processed_econ"
 land_mask_dir = DATA_LOC / "land_mask"
@@ -293,7 +293,7 @@ def load_processed_data():
         logger.info(f"Raster bounds: {_src.bounds}")
 
     df_substation = pd.read_csv(
-        DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
+        DATA_DIR / "admittance_matrix" / "substation_info.csv"
     )
     if "name" not in df_substation.columns:
         raise RuntimeError("substation_info.csv missing 'name' column.")

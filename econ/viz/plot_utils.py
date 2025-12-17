@@ -13,7 +13,7 @@ from scipy.interpolate import griddata
 from configs import setup_logger, get_data_dir
 
 logger = setup_logger("plot-utils")
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 
 
 def setup_map(ax, spatial_extent=[-120, -75, 25, 50]):

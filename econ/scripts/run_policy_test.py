@@ -15,8 +15,8 @@ import pandas as pd
 from pyomo.environ import value
 import matplotlib.pyplot as plt
 
-from models.io_model import InputOutputModel
-from models.cge_data_model import SAMDataManager, run_cge_example
+from econ.models.io_model import InputOutputModel
+from econ.models.cge_data_model import SAMDataManager, run_cge_example
 from configs import IPOPT_EXEC, setup_logger
 
 logger = setup_logger("Policy Test Runner")

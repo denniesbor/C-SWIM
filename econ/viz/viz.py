@@ -24,9 +24,9 @@ from configs import (
     setup_logger,
     PROCESS_GND_FILES,
     get_data_dir,
-    DENNIES_DATA_LOC
+    DATA_DIR
 )
-from viz.plot_utils import (
+from econ.viz.plot_utils import (
     setup_map,
     linestring_to_array,
     process_substations,
@@ -34,7 +34,7 @@ from viz.plot_utils import (
     extract_line_coordinates,
     add_ferc_regions,
 )
-from scripts.l_prepr_data import (
+from econ.scripts.l_prepr_data import (
     read_pickle,
     load_gic_results,
     load_and_aggregate_tiles,
@@ -44,7 +44,7 @@ from scripts.l_prepr_data import (
     load_and_process_gic_data,
 )
 
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger("visualization module")
 
 plt.rcParams.update({
@@ -2369,7 +2369,7 @@ if __name__ == "__main__":
         halloween_e, st_patricks_e, hydro_quebec_e, gannon_b, halloween_b, st_patricks_b, hydro_quebec_b
     ) = load_and_process_gic_data(df_lines)
     
-    ds = xr.open_dataset(DENNIES_DATA_LOC / "gnd_gic_processed" / "gnd_gic_aggregated.nc")
+    ds = xr.open_dataset(DATA_DIR / "gnd_gic_processed" / "gnd_gic_aggregated.nc")
 
     if USE_ALPHA_BETA_SCENARIO:
         try:

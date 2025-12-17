@@ -18,14 +18,14 @@ from configs import (
     setup_logger,
     get_data_dir,
     USE_ALPHA_BETA_SCENARIO,
-    DENNIES_DATA_LOC,
+    DATA_DIR,
     ALPHA_BETA_SCENARIOS,
     REGULAR_SCENARIOS,
     PROCESS_GND_FILES,
 )
 
 warnings.filterwarnings("ignore")
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger("Load preprocessed data")
 
 return_periods = np.arange(50, 251, 25)
@@ -183,7 +183,7 @@ def read_pickle(file_path):
 def load_and_process_gic_data(df_lines):
     """Load and process geomagnetically induced current (GIC) data from HDF5 files."""
     results_path = (
-        DENNIES_DATA_LOC / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
+        DATA_DIR / "statistical_analysis" / "geomagnetic_data_return_periods.h5"
     )
 
     logger.info("Loading and processing GIC data...")
@@ -259,15 +259,15 @@ def load_and_process_gic_data(df_lines):
 
 def load_network_data():
     """Load transmission network data"""
-    tl_path = DENNIES_DATA_LOC / "admittance_matrix" / "transmission_lines.csv"
+    tl_path = DATA_DIR / "admittance_matrix" / "transmission_lines.csv"
     df_lines = pd.read_csv(tl_path)
     df_lines["geometry"] = df_lines["geometry"].apply(wkt.loads)
     df_lines = gpd.GeoDataFrame(df_lines, geometry="geometry", crs="EPSG:4326")
 
-    substation_path = DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
+    substation_path = DATA_DIR / "admittance_matrix" / "substation_info.csv"
     df_substations = pd.read_csv(substation_path)
 
-    GRID_DATA = DENNIES_DATA_LOC / "grid_processed"
+    GRID_DATA = DATA_DIR / "grid_processed"
     SUB_DF_PATH = GRID_DATA / "ss_df.pkl"
 
     ss_gdf_pkl = read_pickle(SUB_DF_PATH)

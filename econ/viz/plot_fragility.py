@@ -13,7 +13,7 @@ from configs import (
 )
 
 
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger("visualization module")
 
 plt.rcParams["font.family"] = "serif"

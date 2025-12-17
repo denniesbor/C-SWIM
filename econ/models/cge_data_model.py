@@ -12,14 +12,12 @@ import argparse
 
 import numpy as np
 import pandas as pd
-from models.cge_model import StdModelDef
+from econ.models.cge_model import StdModelDef
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, ECON_DATA_DIR, IPOPT_EXEC
 
-DATA_LOC = get_data_dir()
+DATA_LOC = ECON_DATA_DIR
 logger = setup_logger("SAMDataManager")
-
-IPOPT_EXEC = "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"
 
 
 class SAMDataManager:

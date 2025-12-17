@@ -11,7 +11,7 @@ import pandas as pd
 from configs import setup_logger, get_data_dir
 
 logger = setup_logger("Production Technology Builder")
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 TABLES_DIR = DATA_LOC / "supply_use_tables"
 G_OUTPUT_DIR = DATA_LOC / "gross_output"
 

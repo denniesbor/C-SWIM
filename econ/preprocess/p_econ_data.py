@@ -18,9 +18,9 @@ import geopandas as gpd
 
 warnings.filterwarnings("ignore")
 
-from configs import setup_logger, get_data_dir, DENNIES_DATA_LOC
+from configs import setup_logger, get_data_dir, DATA_DIR
 
-DATA_LOC = get_data_dir()
+DATA_LOC = get_data_dir(econ=True)
 raw_data_folder = DATA_LOC / "raw_econ_data"
 processed_econ_dir = DATA_LOC / "processed_econ"
 processed_voronoi_dir = DATA_LOC / "processed_voronoi"
@@ -537,7 +537,7 @@ if __name__ == "__main__":
     logger.info("=" * 50)
 
     df_substation = pd.read_csv(
-        DENNIES_DATA_LOC / "admittance_matrix" / "substation_info.csv"
+        DATA_DIR / "admittance_matrix" / "substation_info.csv"
     )
     ehv_coordinates = dict(
         zip(

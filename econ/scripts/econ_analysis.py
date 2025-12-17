@@ -17,9 +17,9 @@ from configs import (
     PROCESS_GND_FILES,
 )
 
-from scripts.l_prepr_data import load_gic_results
-from models.io_model import InputOutputModel
-from models.cge_data_model import run_cge_example
+from econ.scripts.l_prepr_data import load_gic_results
+from econ.models.io_model import InputOutputModel
+from econ.models.cge_data_model import run_cge_example
 
 logger = setup_logger("econ impact assessment")
 
