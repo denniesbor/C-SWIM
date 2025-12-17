@@ -10,4 +10,61 @@ data/EMTF
 data/geomag_data
 data/grid_processed/*
 data/statistical_analysis/*
-data/substation_locations/*
+data/substation_locations/*__pycache__/
+*.pyc
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+tmp
+*.tmp
+test.py
+AdmUntitled.ipynb
+analysis_nb.ipynb
+data/admittance_matrix.old/
+data/gic.old/
+data/gic/
+data/gic_eff/
+data/gnd_gic/
+data/gnd_gic_processed/
+data/horton_grid/
+data/peak_times_1.npy
+data/powerline_ways/
+data/regression/
+data/storm_maxes/
+data/substation_locations/
+data/substations_raw.csv
+logs/
+preprocess/dl_power_grid.py
+test.py
+tmp/
+tva_application.ipynb
+viz/
