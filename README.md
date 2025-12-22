@@ -348,4 +348,4 @@ This work builds upon data and services provided by: GFZ Potsdam; WDC Kyoto; INT
 
 ## License
 
-[MIT License](LICENSE) — This repository provides research code and derived data products as-is for academic and non-commercial use.
+[MIT License](https://opensource.org/licenses/MIT) — This repository provides research code and derived data products as-is for academic and non-commercial use.
