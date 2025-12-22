@@ -17,8 +17,7 @@ This repository provides a reproducible end-to-end pipeline that:
 
 This work builds upon the geoelectric hazard analysis framework developed by Lucas et al. (2020) for 100-year return period assessments, and then extends this approach to the substation-level for the U.S. high-voltage power grid. C-SWIM then uses vulnerable substation information to undertake a comprehensive socio-economic impact analysis.
 
-Paper citation
------------------
+## Paper citation
  
 - Oughton, E.J., Bor, D.K., Weigel, R., Gaunt, C.T., Dogan, R., Huang, L., Love, J.J., & Wiltberger, M. (2024). Major Space Weather Risks Identified via Coupled Physics-Engineering-Economic Modeling. *arXiv preprint* [doi.org](https://arxiv.org/abs/2412.18032)
 
