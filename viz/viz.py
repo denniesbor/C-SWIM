@@ -272,7 +272,11 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
 
     fig = plt.figure(figsize=(10, 8))
     gs = plt.GridSpec(2, 2, hspace=0.02, wspace=0.02, figure=fig)
-    axes = [fig.add_subplot(gs[i, j], projection=projection) for i in range(2) for j in range(2)]
+    axes = [
+        fig.add_subplot(gs[i, j], projection=projection)
+        for i in range(2)
+        for j in range(2)
+    ]
 
     voltage_levels = [161, 230, 345, 500, 765]
     voltage_colors = ["purple", "blue", "green", "orange", "maroon"]
@@ -298,7 +302,7 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
         ax = axes[i]
 
         sc_df = vuln_data[vuln_data["scenario"] == scenario]
-        p_by_sub = (sc_df.groupby("sub_id")["mean_failure_prob"].mean() * 100.0)
+        p_by_sub = sc_df.groupby("sub_id")["mean_failure_prob"].mean() * 100.0
 
         extent = [-120, -75, 25, 50]
         ax = setup_map(ax, extent)
@@ -306,7 +310,13 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
         coords = all_coords.loc[all_coords.index.intersection(p_by_sub.index)].copy()
         coords["p_pct"] = p_by_sub.reindex(coords.index)
 
-        coords["bin"] = pd.cut(coords["p_pct"], bins=p_bins, labels=p_labels, include_lowest=True, right=False)
+        coords["bin"] = pd.cut(
+            coords["p_pct"],
+            bins=p_bins,
+            labels=p_labels,
+            include_lowest=True,
+            right=False,
+        )
         coords.loc[coords["p_pct"] >= 75, "bin"] = ">75%"
 
         for lbl in p_labels:
@@ -314,20 +324,27 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
             if sel.empty:
                 continue
             ax.scatter(
-                sel["longitude"], sel["latitude"],
+                sel["longitude"],
+                sel["latitude"],
                 s=size_map[lbl],
                 facecolors=color_map[lbl],
-                edgecolors="black", linewidths=0.3,
+                edgecolors="black",
+                linewidths=0.3,
                 alpha=0.7,
-                transform=ccrs.PlateCarree(), zorder=3,
+                transform=ccrs.PlateCarree(),
+                zorder=3,
             )
 
         line_coords = [list(geom.coords) for geom in df_lines["geometry"]]
         line_colors = [voltage_color_map[v] for v in df_lines["V"]]
         line_widths = [voltage_width_map[v] for v in df_lines["V"]]
         lc = LineCollection(
-            line_coords, linewidths=line_widths, alpha=0.6, colors=line_colors,
-            transform=ccrs.PlateCarree(), zorder=5,
+            line_coords,
+            linewidths=line_widths,
+            alpha=0.6,
+            colors=line_colors,
+            transform=ccrs.PlateCarree(),
+            zorder=5,
         )
         ax.add_collection(lc)
 
@@ -336,31 +353,54 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
 
     prob_handles = [
         Line2D(
-            [0], [0], marker="o", linestyle="None",
-            markerfacecolor=color_map[lbl], markeredgecolor="black", markeredgewidth=0.3,
-            markersize=leg_ms_map[lbl], label=lbl
+            [0],
+            [0],
+            marker="o",
+            linestyle="None",
+            markerfacecolor=color_map[lbl],
+            markeredgecolor="black",
+            markeredgewidth=0.3,
+            markersize=leg_ms_map[lbl],
+            label=lbl,
         )
         for lbl in p_labels
     ]
     leg_prob = fig.legend(
         handles=prob_handles,
-        loc="lower center", bbox_to_anchor=(0.7, 0.02),
-        ncol=3, frameon=False, fontsize=9,
-        title="Probability of failure", title_fontsize=9,
-        handletextpad=0.4, columnspacing=0.8,
+        loc="lower center",
+        bbox_to_anchor=(0.7, 0.02),
+        ncol=3,
+        frameon=False,
+        fontsize=9,
+        title="Probability of failure",
+        title_fontsize=9,
+        handletextpad=0.4,
+        columnspacing=0.8,
     )
     fig.add_artist(leg_prob)
 
     volt_handles = [
-        Line2D([0], [0], color=voltage_color_map[v], linewidth=voltage_width_map[v], alpha=0.6, label=f"{v} kV")
+        Line2D(
+            [0],
+            [0],
+            color=voltage_color_map[v],
+            linewidth=voltage_width_map[v],
+            alpha=0.6,
+            label=f"{v} kV",
+        )
         for v in voltage_levels
     ]
     leg_tl = fig.legend(
         handles=volt_handles,
-        loc="lower center", bbox_to_anchor=(0.3, 0.02),
-        ncol=3, frameon=False, fontsize=9,
-        title="Transmission line voltages", title_fontsize=9,
-        handletextpad=0.6, columnspacing=0.9,
+        loc="lower center",
+        bbox_to_anchor=(0.3, 0.02),
+        ncol=3,
+        frameon=False,
+        fontsize=9,
+        title="Transmission line voltages",
+        title_fontsize=9,
+        handletextpad=0.6,
+        columnspacing=0.9,
     )
     fig.add_artist(leg_tl)
 
@@ -371,10 +411,18 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
 
     plt.tight_layout(rect=(0, 0.14, 1, 1))
 
-    fig.savefig(FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.pdf", dpi=300, bbox_inches="tight")
-    fig.savefig(FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(
+        FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
     plt.show()
-    
+
 
 def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
     """Plot economic impacts by NAICS sector."""
@@ -857,6 +905,7 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
     )
     plt.show()
 
+
 def create_tl_sub_visualization(gdf_sub, tl_df):
     """Create substation and transmission line visualization."""
     logger.info("Processing substation data...")
@@ -985,12 +1034,14 @@ def plot_transmission_lines(
         norm=norm,
         linewidths=1.0,
         alpha=alpha,
-        transform=ccrs.PlateCarree()
+        transform=ccrs.PlateCarree(),
     )
     coll.set_array(vals_clipped)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        log_vals = np.log10(np.clip(vals.filled(0.0), max(vmin_unsat, 1e-12), vmax_unsat))
+        log_vals = np.log10(
+            np.clip(vals.filled(0.0), max(vmin_unsat, 1e-12), vmax_unsat)
+        )
         log_min = np.log10(vmin_unsat)
         log_max = np.log10(vmax_unsat)
         w = (log_vals - log_min) / max(log_max - log_min, 1e-12)
@@ -1055,7 +1106,7 @@ def create_custom_colorbar_e_field(
 
     cb = plt.colorbar(obj, cax=cax, label=label, orientation="vertical")
     cb.ax.set_ylabel(title, rotation=90, labelpad=1, fontsize=8)
-    
+
     custom_ticks = [1, 10, vmax]
     if (
         np.isfinite(current_max)
@@ -1078,7 +1129,7 @@ def create_custom_colorbar_e_field(
         if np.isfinite(current_max) and np.isclose(t, current_max):
             lbl.set_color("red")
     cb.ax.minorticks_off()
-    
+
     return cb
 
 
@@ -1376,9 +1427,18 @@ def create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines):
     plt.tight_layout()
     plt.show()
     fig.savefig(figures_path / "hazard_maps.png", dpi=300, bbox_inches="tight")
-    
 
-def create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, mt_coords, df_lines, regen_grids=True):
+
+def create_storm_hazard_maps(
+    e_fields,
+    gannon_e,
+    halloween_e,
+    st_patricks_e,
+    hydro_quebec_e,
+    mt_coords,
+    df_lines,
+    regen_grids=True,
+):
     """Create hazard maps for historical storm events."""
     global line_coordinates, valid_indices
 
@@ -1500,10 +1560,26 @@ def create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hyd
         "gannon": "gannon_e",
     }
     storm_titles = {
-        "hydro_quebec": {"e_field": "1989 March (Hydro-Québec)", "v_field": "1989 March", "cmap": "magma_r"},
-        "halloween": {"e_field": "2003 Halloween", "v_field": "2003 Halloween", "cmap": "magma_r"},
-        "st_patricks": {"e_field": "2015 St. Patrick's", "v_field": "2015 St. Patrick's", "cmap": "magma_r"},
-        "gannon": {"e_field": "2024 Gannon", "v_field": "2024 Gannon", "cmap": "magma_r"},
+        "hydro_quebec": {
+            "e_field": "1989 March (Hydro-Québec)",
+            "v_field": "1989 March",
+            "cmap": "magma_r",
+        },
+        "halloween": {
+            "e_field": "2003 Halloween",
+            "v_field": "2003 Halloween",
+            "cmap": "magma_r",
+        },
+        "st_patricks": {
+            "e_field": "2015 St. Patrick's",
+            "v_field": "2015 St. Patrick's",
+            "cmap": "magma_r",
+        },
+        "gannon": {
+            "e_field": "2024 Gannon",
+            "v_field": "2024 Gannon",
+            "cmap": "magma_r",
+        },
     }
     grid_map = {
         "hydro_quebec": grid_e_hq_path,
@@ -1552,12 +1628,42 @@ def create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hyd
         )
 
         if i == 0:
-            ax_e.text(0.0, 1.3, "Event Geoelectric Maps", transform=ax_e.transAxes, ha="left", va="top", fontweight="bold", fontsize=11)
-            ax_tl.text(0.0, 1.3, "Event-Derived Voltages", transform=ax_tl.transAxes, ha="left", va="top", fontweight="bold", fontsize=11)
+            ax_e.text(
+                0.0,
+                1.3,
+                "Event Geoelectric Maps",
+                transform=ax_e.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
+            ax_tl.text(
+                0.0,
+                1.3,
+                "Event-Derived Voltages",
+                transform=ax_tl.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
 
-        ax_e.text(0.0, 1.1, f"({chr(97+num)}) {title_e}", transform=ax_e.transAxes, fontsize=11)
+        ax_e.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {title_e}",
+            transform=ax_e.transAxes,
+            fontsize=11,
+        )
         num += 1
-        ax_tl.text(0.0, 1.1, f"({chr(97+num)}) {title_v}", transform=ax_tl.transAxes, fontsize=11)
+        ax_tl.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {title_v}",
+            transform=ax_tl.transAxes,
+            fontsize=11,
+        )
         num += 1
 
         del v_nodal_column, title_e, title_v, ax_e, ax_tl
@@ -1568,13 +1674,20 @@ def create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hyd
 
 
 def create_B_E_maps(
-    e_fields, b_fields,
-    hydro_quebec_e, hydro_quebec_b,
-    halloween_e, halloween_b,
-    st_patricks_e, st_patricks_b,
-    gannon_e, gannon_b,
-    mt_coords, df_lines,
-    mode="events", regen_grids=False
+    e_fields,
+    b_fields,
+    hydro_quebec_e,
+    hydro_quebec_b,
+    halloween_e,
+    halloween_b,
+    st_patricks_e,
+    st_patricks_b,
+    gannon_e,
+    gannon_b,
+    mt_coords,
+    df_lines,
+    mode="events",
+    regen_grids=False,
 ):
     """Create side-by-side geomagnetic (B) and geoelectric (E) field maps."""
     viz_data_path = DATA_LOC / "viz_data"
@@ -1608,19 +1721,19 @@ def create_B_E_maps(
             ("gannon", "2024 Gannon"),
             (100, "1/100"),
             (150, "1/150"),
-            (250, "1/250")
+            (250, "1/250"),
         ]
         E_arrays = {
             "gannon": gannon_e,
             100: e_fields[100],
             150: e_fields[150],
-            250: e_fields[250]
+            250: e_fields[250],
         }
         B_arrays = {
             "gannon": gannon_b,
             100: b_fields[100],
             150: b_fields[150],
-            250: b_fields[250]
+            250: b_fields[250],
         }
         figshape = (4, 2)
         out_png = "extreme_maps_BE.png"
@@ -1632,13 +1745,19 @@ def create_B_E_maps(
         ge = _grid_path("e", key)
         gb = _grid_path("b", key)
         if regen_grids or (not ge.exists()):
-            generate_grid_and_mask(E_arrays[key], mt_coords, resolution=(500, 1000), filename=ge)
+            generate_grid_and_mask(
+                E_arrays[key], mt_coords, resolution=(500, 1000), filename=ge
+            )
         if regen_grids or (not gb.exists()):
-            generate_grid_and_mask(B_arrays[key], mt_coords, resolution=(500, 1000), filename=gb)
+            generate_grid_and_mask(
+                B_arrays[key], mt_coords, resolution=(500, 1000), filename=gb
+            )
 
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     fig = plt.figure(figsize=(8.5, 10.5), dpi=300)
-    gs = gridspec.GridSpec(figshape[0], figshape[1], figure=fig, wspace=0.2, hspace=0.25)
+    gs = gridspec.GridSpec(
+        figshape[0], figshape[1], figure=fig, wspace=0.2, hspace=0.25
+    )
 
     def _vals(pth):
         _, _, z, _ = read_pickle(pth)
@@ -1654,7 +1773,7 @@ def create_B_E_maps(
 
     E_min, E_max = float(np.nanmin(E_stack)), float(np.nanmax(E_stack))
     B_min, B_max = float(np.nanmin(B_stack)), float(np.nanmax(B_stack))
-    
+
     if not np.isfinite(B_min) or not np.isfinite(B_max) or B_min >= B_max:
         B_min = float(np.nanpercentile(B_stack, 1))
         B_max = float(np.nanpercentile(B_stack, 99))
@@ -1676,47 +1795,54 @@ def create_B_E_maps(
         ax_l = add_ferc_regions(ax_l)
 
         meshB = ax_l.pcolormesh(
-            gx, gy, bz,
+            gx,
+            gy,
+            bz,
             cmap="viridis_r",
             norm=mpl.colors.Normalize(vmin=B_min, vmax=B_max),
             shading="gouraud",
             transform=ccrs.PlateCarree(),
             alpha=0.7,
         )
-        
-        ax_l.text(0.0, 1.08, f"({chr(97+2*i)}) {title_str}", 
-                  transform=ax_l.transAxes, fontsize=10)
-        
+
+        ax_l.text(
+            0.0,
+            1.08,
+            f"({chr(97+2*i)}) {title_str}",
+            transform=ax_l.transAxes,
+            fontsize=10,
+        )
+
         bbox = ax_l.get_position()
         caxB = fig.add_axes([bbox.x1 + 0.01, bbox.y0, 0.015, bbox.height])
         cbB = plt.colorbar(meshB, cax=caxB, orientation="vertical")
         cbB.ax.set_ylabel(r"$\Delta B$ (nT)", rotation=90, labelpad=1, fontsize=8)
-        
+
         ticksB = [B_min, B_max]
         if not any(np.isclose(b_local_max, t) for t in ticksB):
             ticksB.append(b_local_max)
-        
+
         mid_ticks = np.linspace(B_min, B_max, 4)[1:-1]
         for mt in mid_ticks:
             if not any(np.isclose(mt, t) for t in ticksB):
                 ticksB.append(mt)
-        
+
         ticksB = sorted(set(ticksB))
         cbB.set_ticks(ticksB)
-        
+
         labelsB = []
         for t in ticksB:
             if np.isclose(t, b_local_max):
                 labelsB.append(f"{t:.0f}*")
             else:
                 labelsB.append(f"{t:.0f}")
-        
+
         cbB.set_ticklabels(labelsB)
-        
+
         for lbl, t in zip(cbB.ax.get_yticklabels(), ticksB):
             if np.isclose(t, b_local_max):
                 lbl.set_color("red")
-        
+
         cbB.ax.minorticks_off()
 
         data_e = read_pickle(_grid_path("e", key))
@@ -1730,21 +1856,44 @@ def create_B_E_maps(
             global_min=E_min,
             global_max=E_max,
         )
-        ax_r.text(0.0, 1.08, f"({chr(97+2*i+1)}) {title_str}", 
-                  transform=ax_r.transAxes, fontsize=10)
+        ax_r.text(
+            0.0,
+            1.08,
+            f"({chr(97+2*i+1)}) {title_str}",
+            transform=ax_r.transAxes,
+            fontsize=10,
+        )
 
         if i == 0:
-            ax_l.text(0.0, 1.28, "Geomagnetic Maps", transform=ax_l.transAxes, 
-                     ha="left", va="top", fontweight="bold", fontsize=11)
-            ax_r.text(0.0, 1.28, "Geoelectric Maps", transform=ax_r.transAxes, 
-                     ha="left", va="top", fontweight="bold", fontsize=11)
+            ax_l.text(
+                0.0,
+                1.28,
+                "Geomagnetic Maps",
+                transform=ax_l.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
+            ax_r.text(
+                0.0,
+                1.28,
+                "Geoelectric Maps",
+                transform=ax_r.transAxes,
+                ha="left",
+                va="top",
+                fontweight="bold",
+                fontsize=11,
+            )
 
     plt.tight_layout()
     fig.savefig(figures_path / out_png, dpi=300, bbox_inches="tight")
     plt.show()
 
 
-def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False):
+def create_ratio_hazard_maps(
+    e_fields, gannon_e, mt_coords, df_lines, regen_grids=False
+):
     """Create hazard maps showing baseline and ratios relative to 1/100."""
     global line_coordinates, valid_indices
 
@@ -1770,7 +1919,7 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
                 scenarios[key]["e"],
                 mt_coords,
                 resolution=(500, 1000),
-                filename=grid_paths[key]
+                filename=grid_paths[key],
             )
 
     line_coords_file = viz_data_path / "line_coords.pkl"
@@ -1802,7 +1951,7 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
     gs = gridspec.GridSpec(4, 2, figure=fig, wspace=0.2, hspace=0.25)
 
     num = 0
-    
+
     ax_e = fig.add_subplot(gs[0, 0], projection=projection)
     data_e_100 = read_pickle(grid_paths[100])
     ax_e = carto_e_field(
@@ -1814,8 +1963,13 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         global_min=e_min,
         global_max=e_max,
     )
-    ax_e.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[100]['title']}", 
-              transform=ax_e.transAxes, fontsize=11)
+    ax_e.text(
+        0.0,
+        1.1,
+        f"({chr(97+num)}) {scenarios[100]['title']}",
+        transform=ax_e.transAxes,
+        fontsize=11,
+    )
     num += 1
 
     ax_v = fig.add_subplot(gs[0, 1], projection=projection)
@@ -1829,15 +1983,36 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         global_min=v_min,
         global_max=v_max,
     )
-    ax_v.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[100]['title']}", 
-              transform=ax_v.transAxes, fontsize=11)
+    ax_v.text(
+        0.0,
+        1.1,
+        f"({chr(97+num)}) {scenarios[100]['title']}",
+        transform=ax_v.transAxes,
+        fontsize=11,
+    )
     num += 1
 
     if num == 2:
-        ax_e.text(0.0, 1.3, "Geoelectric Comparisons", transform=ax_e.transAxes, 
-                 ha="left", va="top", fontweight="bold", fontsize=11)
-        ax_v.text(0.0, 1.3, "Voltage Comparisons", transform=ax_v.transAxes, 
-                 ha="left", va="top", fontweight="bold", fontsize=11)
+        ax_e.text(
+            0.0,
+            1.3,
+            "Geoelectric Comparisons",
+            transform=ax_e.transAxes,
+            ha="left",
+            va="top",
+            fontweight="bold",
+            fontsize=11,
+        )
+        ax_v.text(
+            0.0,
+            1.3,
+            "Voltage Comparisons",
+            transform=ax_v.transAxes,
+            ha="left",
+            va="top",
+            fontweight="bold",
+            fontsize=11,
+        )
 
     ratio_keys = ["gannon", 150, 250]
     v_cols = {"gannon": "V_gannon", 150: "V_150", 250: "V_250"}
@@ -1849,7 +2024,7 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         else:
             gz_filled = gz
 
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             ratio_e = np.abs(gz_filled) / np.abs(gz_base_filled)
         ratio_e = np.where(np.isfinite(ratio_e), ratio_e, np.nan)
 
@@ -1867,7 +2042,9 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         ax_e = add_ferc_regions(ax_e)
 
         mesh_e = ax_e.pcolormesh(
-            gx, gy, ratio_e,
+            gx,
+            gy,
+            ratio_e,
             cmap="RdBu_r",
             norm=mpl.colors.TwoSlopeNorm(vmin=vmin_ratio, vcenter=1.0, vmax=vmax_ratio),
             shading="gouraud",
@@ -1883,14 +2060,19 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         cb_e.set_ticklabels([f"{vmin_ratio:.2f}", "1.00", f"{vmax_ratio:.2f}"])
         cb_e.ax.minorticks_off()
 
-        ax_e.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[key]['title']}", 
-                  transform=ax_e.transAxes, fontsize=11)
+        ax_e.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {scenarios[key]['title']}",
+            transform=ax_e.transAxes,
+            fontsize=11,
+        )
         num += 1
 
         v_col = v_cols[key]
         v_vals = np.abs(df_lines[v_col].values)
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
+
+        with np.errstate(divide="ignore", invalid="ignore"):
             ratio_v = v_vals / v_base
         ratio_v = np.where(np.isfinite(ratio_v), ratio_v, np.nan)
 
@@ -1907,9 +2089,11 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         ax_v = setup_map(ax_v, [-120, -75, 25, 50])
         ax_v = add_ferc_regions(ax_v)
 
-        norm_v = mpl.colors.TwoSlopeNorm(vmin=vmin_v_ratio, vcenter=1.0, vmax=vmax_v_ratio)
+        norm_v = mpl.colors.TwoSlopeNorm(
+            vmin=vmin_v_ratio, vcenter=1.0, vmax=vmax_v_ratio
+        )
         cmap_v = plt.get_cmap("RdBu_r")
-        
+
         line_segments = []
         line_colors = []
         for idx, (coords, val) in enumerate(zip(line_coordinates, ratio_v)):
@@ -1935,19 +2119,33 @@ def create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grid
         cb_v.set_ticklabels([f"{vmin_v_ratio:.2f}", "1.00", f"{vmax_v_ratio:.2f}"])
         cb_v.ax.minorticks_off()
 
-        ax_v.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[key]['title']}", 
-                  transform=ax_v.transAxes, fontsize=11)
+        ax_v.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {scenarios[key]['title']}",
+            transform=ax_v.transAxes,
+            fontsize=11,
+        )
         num += 1
 
     plt.tight_layout()
     fig.savefig(figures_path / "hazard_maps_ratios.png", dpi=300, bbox_inches="tight")
     plt.show()
-    
+
     logger.info("Ratio comparison maps created successfully!")
 
-# 2  
-def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, 
-                           mt_coords, df_lines, regen_grids=False):
+
+# 2
+def create_event_ratio_maps(
+    e_fields,
+    gannon_e,
+    halloween_e,
+    st_patricks_e,
+    hydro_quebec_e,
+    mt_coords,
+    df_lines,
+    regen_grids=False,
+):
     """Create hazard maps showing baseline and ratios of historical events relative to 1/100."""
     global line_coordinates, valid_indices
 
@@ -1974,7 +2172,7 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
                 scenarios[key]["e"],
                 mt_coords,
                 resolution=(500, 1000),
-                filename=grid_paths[key]
+                filename=grid_paths[key],
             )
 
     line_coords_file = viz_data_path / "line_coords.pkl"
@@ -2006,7 +2204,7 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
     gs = gridspec.GridSpec(5, 2, figure=fig, wspace=0.2, hspace=0.25)
 
     num = 0
-    
+
     ax_e = fig.add_subplot(gs[0, 0], projection=projection)
     data_e_100 = read_pickle(grid_paths[100])
     ax_e = carto_e_field(
@@ -2018,8 +2216,13 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         global_min=e_min,
         global_max=e_max,
     )
-    ax_e.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[100]['title']}", 
-              transform=ax_e.transAxes, fontsize=11)
+    ax_e.text(
+        0.0,
+        1.1,
+        f"({chr(97+num)}) {scenarios[100]['title']}",
+        transform=ax_e.transAxes,
+        fontsize=11,
+    )
     num += 1
 
     ax_v = fig.add_subplot(gs[0, 1], projection=projection)
@@ -2033,22 +2236,43 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         global_min=v_min,
         global_max=v_max,
     )
-    ax_v.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[100]['title']}", 
-              transform=ax_v.transAxes, fontsize=11)
+    ax_v.text(
+        0.0,
+        1.1,
+        f"({chr(97+num)}) {scenarios[100]['title']}",
+        transform=ax_v.transAxes,
+        fontsize=11,
+    )
     num += 1
 
     if num == 2:
-        ax_e.text(0.0, 1.3, "Geoelectric Event Comparisons", transform=ax_e.transAxes, 
-                 ha="left", va="top", fontweight="bold", fontsize=11)
-        ax_v.text(0.0, 1.3, "Voltage Event Comparisons", transform=ax_v.transAxes, 
-                 ha="left", va="top", fontweight="bold", fontsize=11)
+        ax_e.text(
+            0.0,
+            1.3,
+            "Geoelectric Event Comparisons",
+            transform=ax_e.transAxes,
+            ha="left",
+            va="top",
+            fontweight="bold",
+            fontsize=11,
+        )
+        ax_v.text(
+            0.0,
+            1.3,
+            "Voltage Event Comparisons",
+            transform=ax_v.transAxes,
+            ha="left",
+            va="top",
+            fontweight="bold",
+            fontsize=11,
+        )
 
     event_keys = ["hydro_quebec", "halloween", "st_patricks", "gannon"]
     v_cols = {
         "hydro_quebec": "V_hydro_quebec",
         "halloween": "V_halloween",
         "st_patricks": "V_st_patricks",
-        "gannon": "V_gannon"
+        "gannon": "V_gannon",
     }
 
     for i, key in enumerate(event_keys, start=1):
@@ -2058,7 +2282,7 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         else:
             gz_filled = gz
 
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             ratio_e = np.abs(gz_filled) / np.abs(gz_base_filled)
         ratio_e = np.where(np.isfinite(ratio_e), ratio_e, np.nan)
 
@@ -2078,7 +2302,9 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         ax_e = add_ferc_regions(ax_e)
 
         mesh_e = ax_e.pcolormesh(
-            gx, gy, ratio_e,
+            gx,
+            gy,
+            ratio_e,
             cmap="RdBu_r",
             norm=mpl.colors.TwoSlopeNorm(vmin=vmin_ratio, vcenter=1.0, vmax=vmax_ratio),
             shading="gouraud",
@@ -2090,22 +2316,29 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         cax_e = fig.add_axes([bbox.x1 + 0.01, bbox.y0, 0.015, bbox.height])
         cb_e = plt.colorbar(mesh_e, cax=cax_e, orientation="vertical")
         cb_e.ax.set_ylabel("Ratio", rotation=90, labelpad=1, fontsize=8)
-        
+
         median_ratio = float(np.nanmedian(ratio_vals)) if len(ratio_vals) > 0 else 1.0
         ticks_e = [vmin_ratio, 1.0, median_ratio, vmax_ratio]
-        ticks_e = sorted(list(set([t for t in ticks_e if vmin_ratio <= t <= vmax_ratio])))
+        ticks_e = sorted(
+            list(set([t for t in ticks_e if vmin_ratio <= t <= vmax_ratio]))
+        )
         cb_e.set_ticks(ticks_e)
         cb_e.set_ticklabels([f"{t:.2f}" for t in ticks_e])
         cb_e.ax.minorticks_off()
 
-        ax_e.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[key]['title']}", 
-                  transform=ax_e.transAxes, fontsize=11)
+        ax_e.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {scenarios[key]['title']}",
+            transform=ax_e.transAxes,
+            fontsize=11,
+        )
         num += 1
 
         v_col = v_cols[key]
         v_vals = np.abs(df_lines[v_col].values)
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
+
+        with np.errstate(divide="ignore", invalid="ignore"):
             ratio_v = v_vals / v_base
         ratio_v = np.where(np.isfinite(ratio_v), ratio_v, np.nan)
 
@@ -2124,9 +2357,11 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         ax_v = setup_map(ax_v, [-120, -75, 25, 50])
         ax_v = add_ferc_regions(ax_v)
 
-        norm_v = mpl.colors.TwoSlopeNorm(vmin=vmin_v_ratio, vcenter=1.0, vmax=vmax_v_ratio)
+        norm_v = mpl.colors.TwoSlopeNorm(
+            vmin=vmin_v_ratio, vcenter=1.0, vmax=vmax_v_ratio
+        )
         cmap_v = plt.get_cmap("RdBu_r")
-        
+
         line_segments = []
         line_colors = []
         for idx, (coords, val) in enumerate(zip(line_coordinates, ratio_v)):
@@ -2148,34 +2383,51 @@ def create_event_ratio_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydr
         cax_v = fig.add_axes([bbox.x1 + 0.01, bbox.y0, 0.015, bbox.height])
         cb_v = plt.colorbar(lc, cax=cax_v, orientation="vertical")
         cb_v.ax.set_ylabel("Ratio", rotation=90, labelpad=1, fontsize=8)
-        
-        median_v_ratio = float(np.nanmedian(ratio_v_vals)) if len(ratio_v_vals) > 0 else 1.0
+
+        median_v_ratio = (
+            float(np.nanmedian(ratio_v_vals)) if len(ratio_v_vals) > 0 else 1.0
+        )
         ticks_v = [vmin_v_ratio, 1.0, median_v_ratio, vmax_v_ratio]
-        ticks_v = sorted(list(set([t for t in ticks_v if vmin_v_ratio <= t <= vmax_v_ratio])))
+        ticks_v = sorted(
+            list(set([t for t in ticks_v if vmin_v_ratio <= t <= vmax_v_ratio]))
+        )
         cb_v.set_ticks(ticks_v)
         cb_v.set_ticklabels([f"{t:.2f}" for t in ticks_v])
         cb_v.ax.minorticks_off()
 
-        ax_v.text(0.0, 1.1, f"({chr(97+num)}) {scenarios[key]['title']}", 
-                  transform=ax_v.transAxes, fontsize=11)
+        ax_v.text(
+            0.0,
+            1.1,
+            f"({chr(97+num)}) {scenarios[key]['title']}",
+            transform=ax_v.transAxes,
+            fontsize=11,
+        )
         num += 1
 
     plt.tight_layout()
-    fig.savefig(figures_path / "hazard_maps_event_ratios.png", dpi=300, bbox_inches="tight")
+    fig.savefig(
+        figures_path / "hazard_maps_event_ratios.png", dpi=300, bbox_inches="tight"
+    )
     plt.show()
-    
+
     logger.info("Event ratio comparison maps created successfully!")
 
 
 def plot_gnd_gic_panels(ds, df_substations, file_suffix=""):
     """Plot mean of the ground GIC."""
     df_substations = df_substations.rename(columns={"name": "sub_id"})
-    
+
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     spatial_extent = [-120, -75, 25, 50]
     scenarios = ["GIC_gannon", "GIC_50", "GIC_100", "GIC_150", "GIC_200", "GIC_250"]
-    titles = {"GIC_gannon": "Gannon", "GIC_50": "50-year", "GIC_100": "100-year",
-              "GIC_150": "150-year", "GIC_200": "200-year", "GIC_250": "250-year"}
+    titles = {
+        "GIC_gannon": "Gannon",
+        "GIC_50": "50-year",
+        "GIC_100": "100-year",
+        "GIC_150": "150-year",
+        "GIC_200": "200-year",
+        "GIC_250": "250-year",
+    }
     cap_val = 400.0
     alpha_pts = 0.7
 
@@ -2188,8 +2440,13 @@ def plot_gnd_gic_panels(ds, df_substations, file_suffix=""):
     norm_disc = colors.BoundaryNorm(bin_edges, ncolors=cmap_disc.N, clip=True)
 
     size_map = {
-        "<20": 5, "20–40": 10, "40–60": 25,
-        "60–80": 40, "80–100": 60, "100–200": 80, "200–400": 100
+        "<20": 5,
+        "20–40": 10,
+        "40–60": 25,
+        "60–80": 40,
+        "80–100": 60,
+        "100–200": 80,
+        "200–400": 100,
     }
 
     name_dim = "substatopn" if "substatopn" in ds.dims else "substation"
@@ -2220,7 +2477,9 @@ def plot_gnd_gic_panels(ds, df_substations, file_suffix=""):
         row_axes[r].append(ax)
         ax = setup_map(ax, spatial_extent)
 
-        vals = np.clip(np.abs(ds["gic_stat"].sel(stat="mean", scenario=scen).values), 0, cap_val)
+        vals = np.clip(
+            np.abs(ds["gic_stat"].sel(stat="mean", scenario=scen).values), 0, cap_val
+        )
         mask = valid_xy & np.isfinite(vals)
 
         bins = np.digitize(vals[mask], bin_edges, right=False) - 1
@@ -2228,17 +2487,22 @@ def plot_gnd_gic_panels(ds, df_substations, file_suffix=""):
         sizes = np.vectorize(size_map.get)(np.array(bin_labels)[bins])
 
         ax.scatter(
-            lons[mask], lats[mask],
-            s=sizes, c=vals[mask],
-            cmap=cmap_disc, norm=norm_disc,
-            alpha=alpha_pts, edgecolors="none",
-            transform=ccrs.PlateCarree(), zorder=3,
+            lons[mask],
+            lats[mask],
+            s=sizes,
+            c=vals[mask],
+            cmap=cmap_disc,
+            norm=norm_disc,
+            alpha=alpha_pts,
+            edgecolors="none",
+            transform=ccrs.PlateCarree(),
+            zorder=3,
         )
         ax.set_title(f"({chr(97 + i)}) {panel_names[scen]}", fontsize=10, loc="left")
         ax.spines["geo"].set_visible(False)
         ax.set_facecolor("#F0F0F0")
 
-    tick_locs = (bin_edges[:-1] + bin_edges[1:]) / 2.0 
+    tick_locs = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     sm = plt.cm.ScalarMappable(cmap=cmap_disc, norm=norm_disc)
     sm.set_array([])
 
@@ -2251,15 +2515,19 @@ def plot_gnd_gic_panels(ds, df_substations, file_suffix=""):
 
         cax = fig.add_axes([x_right + pad, y0, cax_w, y1 - y0])
         cb = fig.colorbar(sm, cax=cax, orientation="vertical")
-        cb.set_ticks(tick_locs)            
+        cb.set_ticks(tick_locs)
         cb.set_ticklabels(bin_labels)
-        cb.ax.tick_params(length=0)            
+        cb.ax.tick_params(length=0)
         cb.set_label("|Mean GIC| (A/ph)", fontsize=8)
 
     fig.patch.set_facecolor("#F0F0F0")
     plt.tight_layout(rect=(0.05, 0.05, 0.90, 0.95))
-    fig.savefig(FIGURES_DIR / f"gnd_gic_panels_{file_suffix}.pdf", dpi=300, bbox_inches="tight")
-    fig.savefig(FIGURES_DIR / f"gnd_gic_panels_{file_suffix}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(
+        FIGURES_DIR / f"gnd_gic_panels_{file_suffix}.pdf", dpi=300, bbox_inches="tight"
+    )
+    fig.savefig(
+        FIGURES_DIR / f"gnd_gic_panels_{file_suffix}.png", dpi=300, bbox_inches="tight"
+    )
     plt.show()
 
 
@@ -2291,7 +2559,9 @@ def create_tl_sub_visualization(gdf_sub, tl_df):
 
     projection = ccrs.LambertConformal(central_longitude=-98, central_latitude=39.5)
     proj_data = ccrs.PlateCarree()
-    fig, ax = plt.subplots(figsize=PLOT_CONFIG["figsize"], subplot_kw={"projection": projection})
+    fig, ax = plt.subplots(
+        figsize=PLOT_CONFIG["figsize"], subplot_kw={"projection": projection}
+    )
     ax = setup_map(ax)
     ax.set_extent(PLOT_CONFIG["spatial_extent"], crs=proj_data)
 
@@ -2301,13 +2571,17 @@ def create_tl_sub_visualization(gdf_sub, tl_df):
     coll.set_alpha(0.9)
     coll.set_zorder(3)
     ax.add_collection(coll)
-    ax.plot([], color=SCHEME["LINE"], linewidth=0.75, label="Transmission lines (≥161 kV)")
+    ax.plot(
+        [], color=SCHEME["LINE"], linewidth=0.75, label="Transmission lines (≥161 kV)"
+    )
 
     for category in PLOT_CONFIG["categories"]:
         mask = substations_gdf["SS_TYPE_CATEGORY"] == category
         if mask.sum() == 0:
             continue
-        node_color = SCHEME["TX_NODE"] if category == "transmission" else SCHEME["GEN_NODE"]
+        node_color = (
+            SCHEME["TX_NODE"] if category == "transmission" else SCHEME["GEN_NODE"]
+        )
         sc = ax.scatter(
             substations_gdf.loc[mask, "lon"],
             substations_gdf.loc[mask, "lat"],
@@ -2361,22 +2635,32 @@ if __name__ == "__main__":
         v_fields,
         gannon_e,
         v_cols,
-        halloween_e, st_patricks_e, hydro_quebec_e, gannon_b, halloween_b, st_patricks_b, hydro_quebec_b
+        halloween_e,
+        st_patricks_e,
+        hydro_quebec_e,
+        gannon_b,
+        halloween_b,
+        st_patricks_b,
+        hydro_quebec_b,
     ) = load_and_process_gic_data(df_lines)
-    
+
     ds = xr.open_dataset(DATA_DIR / "gnd_gic_processed" / "gnd_gic_aggregated.nc")
 
     if USE_ALPHA_BETA_SCENARIO:
         try:
             io_results_df = pd.read_csv(FIGURES_DIR / "io_model_results_alpha_beta.csv")
-            confidence_df = pd.read_csv(FIGURES_DIR / "confidence_intervals_alpha_beta.csv")
+            confidence_df = pd.read_csv(
+                FIGURES_DIR / "confidence_intervals_alpha_beta.csv"
+            )
         except Exception as e:
             logger.error(f"Error loading economic results: {e}")
 
     elif PROCESS_GND_FILES:
         try:
             io_results_df = pd.read_csv(FIGURES_DIR / "io_model_results_gnd_gic.csv")
-            confidence_df = pd.read_csv(FIGURES_DIR / "confidence_intervals_gnd_gic.csv")
+            confidence_df = pd.read_csv(
+                FIGURES_DIR / "confidence_intervals_gnd_gic.csv"
+            )
         except Exception as e:
             logger.error(f"Error loading economic results: {e}")
     else:
@@ -2394,10 +2678,10 @@ if __name__ == "__main__":
 
     # logger.info("Generating Visualizations - Hazard Maps")
     # create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines)
-    
+
     # logger.info("Generating Visualizations - Hazard Event Maps")
     # create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, mt_coords, df_lines, regen_grids=True)
-    
+
     # logger.info("Generating Visualizations - B and E Field Maps")
     # create_B_E_maps(
     #     e_fields, b_fields,
@@ -2419,7 +2703,7 @@ if __name__ == "__main__":
     #     mt_coords, df_lines,
     #     mode="extremes", regen_grids=True
     # )
-    
+
     # create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False)
     # create_event_ratio_maps(
     #     e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e,
@@ -2430,7 +2714,7 @@ if __name__ == "__main__":
     # create_tl_sub_visualization(ss_gdf_pkl, df_lines)
 
     # plot_vuln_trafos(mean_vuln_all, df_lines, file_suffix=filename_suffix)
-    
+
     # plot_gnd_gic_panels(ds, df_substations, file_suffix=filename_suffix)
 
     # plot_econo_naics(io_results_df, model_type="io", file_suffix=filename_suffix)
@@ -2439,83 +2723,85 @@ if __name__ == "__main__":
     # )
 
     # plot_econo_naics_dodged(io_results_df, model_type="io", file_suffix=filename_suffix)
-    
+
     # Substations data
-    voronoi_gdf = gpd.read_file(DATA_LOC / "processed_voronoi" / "voronoi_polygons_clipped.geojson")
-    
+    voronoi_gdf = gpd.read_file(
+        DATA_LOC / "processed_voronoi" / "voronoi_polygons_clipped.geojson"
+    )
+
     # Pivot vulnerability: one row per substation, columns = scenarios
     vuln_pivot = (
-        mean_vuln_all
-        .groupby(['sub_id', 'scenario'])['mean_failure_prob']
+        mean_vuln_all.groupby(["sub_id", "scenario"])["mean_failure_prob"]
         .mean()
-        .unstack('scenario')
+        .unstack("scenario")
         .reset_index()
     )
 
     # Ensure sub_id is string in both dataframes
-    vuln_pivot['sub_id'] = vuln_pivot['sub_id'].astype(str)
-    aggregate_gdf['sub_id'] = aggregate_gdf['sub_id'].astype(str)
+    vuln_pivot["sub_id"] = vuln_pivot["sub_id"].astype(str)
+    aggregate_gdf["sub_id"] = aggregate_gdf["sub_id"].astype(str)
 
     # Merge: substation with pop/econ + failure probabilities
-    substation_risk = aggregate_gdf.merge(vuln_pivot, on='sub_id', how='left')
+    substation_risk = aggregate_gdf.merge(vuln_pivot, on="sub_id", how="left")
 
     # Add coordinates from mean_vuln_all
-    sub_coords = mean_vuln_all.groupby('sub_id')[['latitude', 'longitude']].first().reset_index()
-    sub_coords['sub_id'] = sub_coords['sub_id'].astype(str)
-    substation_risk = substation_risk.merge(sub_coords, on='sub_id', how='left')
-
+    sub_coords = (
+        mean_vuln_all.groupby("sub_id")[["latitude", "longitude"]].first().reset_index()
+    )
+    sub_coords["sub_id"] = sub_coords["sub_id"].astype(str)
+    substation_risk = substation_risk.merge(sub_coords, on="sub_id", how="left")
 
     export_data = {
-        'geo': {
-            'transmission_lines': df_lines,
-            'substations': df_substations,
-            'vulnerable_substations': mean_vuln_all,  # sub_id, scenario, failure_prob
+        "geo": {
+            "transmission_lines": df_lines,
+            "substations": df_substations,
+            "vulnerable_substations": mean_vuln_all,  # sub_id, scenario, failure_prob
         },
-        'fields': {
-            'mt_coords': mt_coords,
-            'mt_names': mt_names,
-            'e_fields': e_fields,
-            'b_fields': b_fields,
-            'gannon_e': gannon_e,
-            'gannon_b': gannon_b,
-            'halloween_e': halloween_e,
-            'halloween_b': halloween_b,
-            'st_patricks_e': st_patricks_e,
-            'st_patricks_b': st_patricks_b,
-            'hydro_quebec_e': hydro_quebec_e,
-            'hydro_quebec_b': hydro_quebec_b,
+        "fields": {
+            "mt_coords": mt_coords,
+            "mt_names": mt_names,
+            "e_fields": e_fields,
+            "b_fields": b_fields,
+            "gannon_e": gannon_e,
+            "gannon_b": gannon_b,
+            "halloween_e": halloween_e,
+            "halloween_b": halloween_b,
+            "st_patricks_e": st_patricks_e,
+            "st_patricks_b": st_patricks_b,
+            "hydro_quebec_e": hydro_quebec_e,
+            "hydro_quebec_b": hydro_quebec_b,
         },
-        'economics': {
-            'io_results': io_results_df,
-            'confidence_intervals': confidence_df,
+        "economics": {
+            "io_results": io_results_df,
+            "confidence_intervals": confidence_df,
         },
-        'spatial_risk': {
-            'substation_risk': substation_risk,  # sub_id, POP20, GDP_*, EST_*, failure_prob_*
-            'voronoi_polygons': voronoi_gdf,      # substation service areas
-            'aggregate_gdf': aggregate_gdf,       # raw dasymetric allocation
+        "spatial_risk": {
+            "substation_risk": substation_risk,  # sub_id, POP20, GDP_*, EST_*, failure_prob_*
+            "voronoi_polygons": voronoi_gdf,  # substation service areas
+            "aggregate_gdf": aggregate_gdf,  # raw dasymetric allocation
         },
-        'metadata': {
-            'scenarios': list(vuln_pivot.columns.drop('sub_id')),
-            'units': {
-                'e_field': 'V/km', 
-                'b_field': 'nT', 
-                'voltage': 'V',
-                'failure_prob': 'probability (0-1)',
-                'population': 'persons',
-                'gdp': 'million $/day',
+        "metadata": {
+            "scenarios": list(vuln_pivot.columns.drop("sub_id")),
+            "units": {
+                "e_field": "V/km",
+                "b_field": "nT",
+                "voltage": "V",
+                "failure_prob": "probability (0-1)",
+                "population": "persons",
+                "gdp": "million $/day",
             },
-            'crs': 'EPSG:4326',
-            'notes': {
-                'substation_risk': 'Population/GDP allocated to substations via Voronoi dasymetric interpolation',
-                'pop_at_risk': 'Calculate as POP20 * failure_prob for each scenario',
-            }
-        }
+            "crs": "EPSG:4326",
+            "notes": {
+                "substation_risk": "Population/GDP allocated to substations via Voronoi dasymetric interpolation",
+                "pop_at_risk": "Calculate as POP20 * failure_prob for each scenario",
+            },
+        },
     }
 
     export_dir = DATA_LOC / "wsj"
     export_dir.mkdir(parents=True, exist_ok=True)
     export_path = export_dir / "viz_export_data.pkl"
-    with open(export_path, 'wb') as f:
+    with open(export_path, "wb") as f:
         pickle.dump(export_data, f)
 
     print(f"Exported: {export_path} ({export_path.stat().st_size / 1e6:.1f} MB)")
@@ -2524,10 +2810,10 @@ if __name__ == "__main__":
     if EXPORT_GRIDS:
         grids = {}
         for grid_file in (DATA_LOC / "viz_data").glob("grid_*.pkl"):
-            with open(grid_file, 'rb') as f:
+            with open(grid_file, "rb") as f:
                 grids[grid_file.stem] = pickle.load(f)
-        
+
         grid_path = DATA_LOC / "wsj" / "viz_grids_data.pkl"
-        with open(grid_path, 'wb') as f:
+        with open(grid_path, "wb") as f:
             pickle.dump(grids, f)
         print(f"Grids: {grid_path} ({grid_path.stat().st_size / 1e9:.2f} GB)")

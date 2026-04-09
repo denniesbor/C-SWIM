@@ -32,7 +32,7 @@ logger = setup_logger(log_file="logs/p_geomag.log")
 
 def process_magnetic_files(file_path, baseline=None, is_processed=False):
     """Process magnetic field data from file.
-    
+
     If baseline dict {X, Y, Z} is provided, subtract it.
     Otherwise fall back to per-file median (original behaviour).
     """
@@ -103,12 +103,10 @@ def compute_storm_baseline(dir_path, storm_start, storm_end, pad_hours=12):
     Returns dict {X, Y, Z} or None if insufficient data.
     """
     extended_start = storm_start - pd.Timedelta(hours=pad_hours)
-    extended_end   = storm_end   + pd.Timedelta(hours=pad_hours)
+    extended_end = storm_end + pd.Timedelta(hours=pad_hours)
 
     dates = pd.date_range(
-        extended_start.normalize(),
-        extended_end.normalize(),
-        freq="D"
+        extended_start.normalize(), extended_end.normalize(), freq="D"
     )
 
     obs_name = os.path.basename(dir_path).lower()
@@ -125,12 +123,13 @@ def compute_storm_baseline(dir_path, storm_start, storm_end, pad_hours=12):
 
     combined = pd.concat(all_frames)
     combined = combined[
-        (combined.index >= extended_start) &
-        (combined.index <= extended_end)
+        (combined.index >= extended_start) & (combined.index <= extended_end)
     ]
 
     if len(combined) < 30:
-        logger.warning(f"[{obs_name}] Less than 30 min of data in storm window — skipping baseline")
+        logger.warning(
+            f"[{obs_name}] Less than 30 min of data in storm window — skipping baseline"
+        )
         return None
 
     logger.info(
@@ -150,7 +149,7 @@ def compute_storm_baseline(dir_path, storm_start, storm_end, pad_hours=12):
 
 def process_directory(dir_path, storm_df=None):
     """Process all magnetic field files in a directory.
-    
+
     If storm_df is provided, files belonging to a storm window use
     a single extended-window baseline. Otherwise falls back to
     original per-file median (original behaviour preserved).
@@ -182,18 +181,21 @@ def process_directory(dir_path, storm_df=None):
                 name_no_ext = Path(filename).stem  # e.g. ott20240511vmin
                 # find 8-digit date string
                 import re
+
                 match = re.search(r"(\d{8})", name_no_ext)
                 if match:
                     file_date = pd.Timestamp(match.group(1))
                     storm_match = storm_df[
-                        (storm_df["Start"] - pd.Timedelta(hours=12) <= file_date) &
-                        (storm_df["End"]   + pd.Timedelta(hours=12) >= file_date)
+                        (storm_df["Start"] - pd.Timedelta(hours=12) <= file_date)
+                        & (storm_df["End"] + pd.Timedelta(hours=12) >= file_date)
                     ]
                     if not storm_match.empty:
                         idx = storm_match.index[0]
                         baseline = storm_baselines.get(idx)
                         if baseline is None:
-                            logger.warning(f"No baseline for {filename} storm idx={idx}")
+                            logger.warning(
+                                f"No baseline for {filename} storm idx={idx}"
+                            )
             except Exception as e:
                 logger.warning(f"Could not determine baseline for {filename}: {e}")
                 baseline = None
@@ -210,8 +212,7 @@ def process_directory(dir_path, storm_df=None):
 
     results = list(
         filter(
-            lambda x: x[0] is not None,
-            map(process_file, sorted(os.listdir(dir_path)))
+            lambda x: x[0] is not None, map(process_file, sorted(os.listdir(dir_path)))
         )
     )
 
@@ -237,6 +238,7 @@ def process_all_directories(geomag_folder, usgs_obs, nrcan_obs, storm_df=None):
     ]
 
     from functools import partial
+
     process_dir_fn = partial(process_directory, storm_df=storm_df)
 
     with Pool(processes=os.cpu_count()) as pool:
@@ -260,6 +262,7 @@ def combine_results(results, obsv_xarrays):
             if result_list and result_list[0].site_id.iloc[0] in obsv_xarrays
         )
     )
+
 
 def get_mode(series):
     """Get the mode of a series."""
@@ -295,10 +298,10 @@ def prepare_dataset(combined_df):
     ds = xr.Dataset(
         coords={
             "longitude": ("site", unique_lat_lon["Longitude"].values),
-            "latitude":  ("site", unique_lat_lon["Latitude"].values),
-            "site":      unique_lat_lon["site_id"].values,
+            "latitude": ("site", unique_lat_lon["Latitude"].values),
+            "site": unique_lat_lon["site_id"].values,
             "component": ["X", "Y", "Z"],
-            "time":      time_steps,
+            "time": time_steps,
         },
         data_vars={"B": (("time", "site", "component"), dB)},
     )
@@ -335,17 +338,39 @@ if __name__ == "__main__":
     usgs_obs = [
         obs.upper()
         for obs in [
-            "bou", "brw", "bsl", "cmo", "ded", "frd", "frn",
-            "gua", "hon", "new", "shu", "sit", "sjg", "tuc",
+            "bou",
+            "brw",
+            "bsl",
+            "cmo",
+            "ded",
+            "frd",
+            "frn",
+            "gua",
+            "hon",
+            "new",
+            "shu",
+            "sit",
+            "sjg",
+            "tuc",
         ]
     ]
     nrcan_obs = [
-        "ALE", "BLC", "BRD", "CBB", "FCC", "IQA",
-        "MEA", "OTT", "RES", "STJ", "VIC", "YKC",
+        "ALE",
+        "BLC",
+        "BRD",
+        "CBB",
+        "FCC",
+        "IQA",
+        "MEA",
+        "OTT",
+        "RES",
+        "STJ",
+        "VIC",
+        "YKC",
     ]
 
     storm_df = pd.read_csv(DATA_LOC / "kp_ap_indices" / "storm_periods.csv")
     storm_df["Start"] = pd.to_datetime(storm_df["Start"])
-    storm_df["End"]   = pd.to_datetime(storm_df["End"])
+    storm_df["End"] = pd.to_datetime(storm_df["End"])
 
     run_function(geomag_folder, usgs_obs, nrcan_obs, storm_df=storm_df)

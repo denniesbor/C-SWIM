@@ -15,8 +15,8 @@ logger = setup_logger(log_file="logs/run_viz.log")
 VIZ_DIR = Path(__file__).parent / "viz"
 
 STEPS = [
-    ("01", "viz.py",              "Generate economic impact figures"),
-    ("02", "plot_fragility.py",   "Plot fragility curves"),
+    ("01", "viz.py", "Generate economic impact figures"),
+    ("02", "plot_fragility.py", "Plot fragility curves"),
 ]
 
 STEP_MAP = {n: (s, l) for n, s, l in STEPS}
@@ -41,12 +41,17 @@ def run_step(script: str, label: str, dry_run: bool = False) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Run visualization pipeline")
-    parser.add_argument("--steps",     nargs="+", default=None,
-                        help="Run specific steps e.g. --steps 01 02")
-    parser.add_argument("--from-step", type=str,  default=None,
-                        help="Start from this step e.g. --from-step 02")
-    parser.add_argument("--dry-run",   action="store_true")
-    parser.add_argument("--list",      action="store_true")
+    parser.add_argument(
+        "--steps", nargs="+", default=None, help="Run specific steps e.g. --steps 01 02"
+    )
+    parser.add_argument(
+        "--from-step",
+        type=str,
+        default=None,
+        help="Start from this step e.g. --from-step 02",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
     if args.list:
@@ -55,7 +60,7 @@ def main():
         return
 
     all_ids = [n for n, _, _ in STEPS]
-    steps   = STEPS
+    steps = STEPS
 
     if args.steps:
         invalid = [s for s in args.steps if s not in STEP_MAP]
@@ -67,7 +72,7 @@ def main():
         if args.from_step not in all_ids:
             logger.error(f"Step {args.from_step} not found")
             sys.exit(1)
-        steps = STEPS[all_ids.index(args.from_step):]
+        steps = STEPS[all_ids.index(args.from_step) :]
 
     logger.info(f"Running {len(steps)} visualization steps")
     for n, script, label in steps:

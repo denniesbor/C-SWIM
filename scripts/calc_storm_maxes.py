@@ -30,7 +30,7 @@ logger = setup_logger(log_file="logs/storm_maxes.log")
 
 def read_usgs_accepted_sites():
     """Read USGS accepted sites from a text file."""
-    
+
     file_path = DATA_LOC / "EMTF" / "USMTArray_unique_grid_points_1616_sites.txt"
     try:
         df = pd.read_csv(

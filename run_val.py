@@ -15,15 +15,19 @@ logger = setup_logger(log_file="logs/run_val.log")
 VAL_DIR = Path(__file__).parent / "validation"
 
 STEPS = [
-    ("01", "01_gic_freq_analysis.py",  "GIC frequency analysis against TVA measurements"),
-    ("02", "02_gic_time_analysis.py",  "GIC time-series analysis"),
-    ("03", "03_mag_analysis.py",       "Magnetometer field analysis"),
-    ("04", "04_plot_tva_site.py",      "Plot TVA site comparisons"),
-    ("05", "05_alpha_beta_reg.py",     "Alpha-beta regression fitting"),
-    ("06", "06_scale_gic.py",          "Scale GIC estimates"),
+    (
+        "01",
+        "01_gic_freq_analysis.py",
+        "GIC frequency analysis against TVA measurements",
+    ),
+    ("02", "02_gic_time_analysis.py", "GIC time-series analysis"),
+    ("03", "03_mag_analysis.py", "Magnetometer field analysis"),
+    ("04", "04_plot_tva_site.py", "Plot TVA site comparisons"),
+    ("05", "05_alpha_beta_reg.py", "Alpha-beta regression fitting"),
+    ("06", "06_scale_gic.py", "Scale GIC estimates"),
     ("07", "07_regress_vs_sim_gic.py", "Regression vs simulated GIC comparison"),
-    ("08", "08_build_horton_grid.py",  "Build IEEE Horton benchmark grid"),
-    ("09", "09_plot_horton_grid.py",   "Plot Horton grid GIC results"),
+    ("08", "08_build_horton_grid.py", "Build IEEE Horton benchmark grid"),
+    ("09", "09_plot_horton_grid.py", "Plot Horton grid GIC results"),
 ]
 
 STEP_MAP = {n: (s, l) for n, s, l in STEPS}
@@ -48,12 +52,17 @@ def run_step(script: str, label: str, dry_run: bool = False) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Run validation pipeline")
-    parser.add_argument("--steps",     nargs="+", default=None,
-                        help="Run specific steps e.g. --steps 02 03")
-    parser.add_argument("--from-step", type=str,  default=None,
-                        help="Start from this step e.g. --from-step 05")
-    parser.add_argument("--dry-run",   action="store_true")
-    parser.add_argument("--list",      action="store_true")
+    parser.add_argument(
+        "--steps", nargs="+", default=None, help="Run specific steps e.g. --steps 02 03"
+    )
+    parser.add_argument(
+        "--from-step",
+        type=str,
+        default=None,
+        help="Start from this step e.g. --from-step 05",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
     if args.list:
@@ -62,7 +71,7 @@ def main():
         return
 
     all_ids = [n for n, _, _ in STEPS]
-    steps   = STEPS
+    steps = STEPS
 
     if args.steps:
         invalid = [s for s in args.steps if s not in STEP_MAP]
@@ -74,7 +83,7 @@ def main():
         if args.from_step not in all_ids:
             logger.error(f"Step {args.from_step} not found")
             sys.exit(1)
-        steps = STEPS[all_ids.index(args.from_step):]
+        steps = STEPS[all_ids.index(args.from_step) :]
 
     logger.info(f"Running {len(steps)} validation steps")
     for n, script, label in steps:

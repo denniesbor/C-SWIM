@@ -77,11 +77,11 @@ def main():
     args = parser.parse_args()
 
     script_map = {
-        "storm":      ["calc_storm_maxes.py"],
-        "stat":       ["stat_analysis.py"],
-        "gic":        ["est_gic.py"],
+        "storm": ["calc_storm_maxes.py"],
+        "stat": ["stat_analysis.py"],
+        "gic": ["est_gic.py"],
         "admittance": ["build_admittance_matrix.py"],
-        "all":        ["calc_storm_maxes.py", "stat_analysis.py", "est_gic.py"],
+        "all": ["calc_storm_maxes.py", "stat_analysis.py", "est_gic.py"],
     }
 
     for script in script_map[args.script]:

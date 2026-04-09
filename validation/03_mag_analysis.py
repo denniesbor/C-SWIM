@@ -37,6 +37,7 @@ logger = setup_logger(log_file="logs/val_bfield.log")
 
 setup_matplotlib()
 
+
 def prepare_data_for_plotting(ds_mag_data, simulated_ds, threshold=30, n_sites=6):
     """Match magnetometer stations to nearest MT sites and slice to overlapping time window."""
     ds_mag_close = get_close_mag_sites(ds_mag_data, simulated_ds, threshold=threshold)

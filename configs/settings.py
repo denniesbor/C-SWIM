@@ -287,13 +287,16 @@ def setup_logger(name=APP_NAME, log_file=None, level=logging.INFO):
         logger.addHandler(file_handler)
     return logger
 
+
 def setup_matplotlib():
     """Configure global matplotlib defaults for all plots."""
-    plt.rcParams.update({
-        "font.family": "serif",
-        "font.serif": ["Times New Roman"],
-        "mathtext.fontset": "custom",
-        "mathtext.rm": "Times New Roman",
-        "mathtext.it": "Times New Roman:italic",
-        "mathtext.bf": "Times New Roman:bold",
-    })
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman"],
+            "mathtext.fontset": "custom",
+            "mathtext.rm": "Times New Roman",
+            "mathtext.it": "Times New Roman:italic",
+            "mathtext.bf": "Times New Roman:bold",
+        }
+    )
