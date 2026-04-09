@@ -15,6 +15,7 @@ run-econ        = "run_econ:main"
 run-preprocess  = "run_preprocess:main"
 run-postprocess = "run_postprocess:main"
 run-viz         = "run_viz:main"
+run-rep-mapping = "run_rep_mapping:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -26,4 +27,5 @@ include = [
     "postprocess*",
     "scripts*",
     "viz*",
+    "rep_mapping*",
 ]

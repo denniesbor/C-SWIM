@@ -182,6 +182,32 @@ python run_val.py --steps 01 02    # TVA GIC comparison only
 
 ---
 
+## Reproducible Mapping - GIC Network Construction and Validation
+
+The `rep_mapping/` module demonstrates the direct application of the annotation dataset described in Oughton et al. (2024) to construct and validate a physics-based GIC network for the Tennessee Valley Authority (TVA) region using entirely open-source data.
+
+### What it does
+
+1. Builds a geospatial TVA transmission network from OSM substation locations and HIFLD line geometry
+2. Parameterizes the network using transformer counts and role classifications derived from satellite imagery annotation
+3. Validates the GIC solver against the UIUC150 synthetic benchmark under a uniform 1 V/km forcing
+4. Applies the pipeline to the May 2024 Gannon geomagnetic storm and evaluates modeled GIC against 13 TVA monitoring devices
+
+### Data availability
+
+Derived outputs are provided in `data/rep_data/` and do not require access to the raw storm or measurement data. Raw TVA GIC measurements are not included — see Wilkerson et al. (2025) for observational data access.
+
+### Running the pipeline
+
+```bash
+python run_rep_mapping.py preprocess  # build grids and compute voltages
+python run_rep_mapping.py validate    # run GIC solver
+python run_rep_mapping.py viz         # generate figures
+python run_rep_mapping.py all         # full pipeline
+```
+
+---
+
 ## Directory Structure
 
 ```
@@ -195,6 +221,11 @@ c-swim/
 │   ├── preprocess/
 │   ├── scripts/
 │   └── models/
+├── rep_mapping/          # Reproducible mapping GIC validation
+│   ├── preprocess/       # Grid construction
+│   ├── scripts/          # GIC solver
+│   ├── viz/              # Figures
+│   └── rep_config.py     # Module configuration
 ├── viz/                  # Visualization scripts
 ├── run_preprocess.py     # Preprocessing runner
 ├── run_scenarios.py      # GIC scenario runner
@@ -202,6 +233,7 @@ c-swim/
 ├── run_val.py            # Validation runner
 ├── run_econ.py           # Economic analysis runner
 ├── run_viz.py            # Visualization runner
+├── run_rep_mapping.py    # Reproducible mapping runner
 ├── environment.yml       # Conda environment
 └── pyproject.toml        # Package installation
 ```
@@ -232,12 +264,9 @@ If you use this pipeline in your research, please cite:
   year={2024},
   eprint={2412.18032},
   archivePrefix={arXiv},
-  primaryClass={physics.geo-ph},
   url={https://arxiv.org/abs/2412.18032}
 }
-```
 
-```bibtex
 @dataset{bor2025geomag,
   author = {Bor, Dennies K.},
   title = {C-SWIM Geomagnetic and Grid Data},
@@ -245,6 +274,42 @@ If you use this pipeline in your research, please cite:
   publisher = {Zenodo},
   doi = {10.5281/zenodo.16994602},
   url = {https://doi.org/10.5281/zenodo.16994602}
+}
+
+@article{oughton_reproducible_2024,
+  title = {A {Reproducible} {Method} for {Mapping} {Electricity} {Transmission} {Infrastructure} for {Space} {Weather} {Risk} {Assessment}},
+  year = {2024},
+  doi = {10.48550/arXiv.2412.17685},
+  journal = {arXiv.org},
+  author = {Oughton, E. and Peters, Evan Alexander and Bor, Dennies and Rivera, Noah and Gaunt, C. T. and Weigel, Robert}
+}
+
+@misc{wilkerson_gic--related_2025,
+  title = {{GIC}--{Related} {Observations} {During} the {May} 2024 {Geomagnetic} {Storm} in the {United} {States}},
+  year = {2025},
+  doi = {10.48550/arXiv.2507.07009},
+  publisher = {arXiv},
+  author = {Wilkerson, L. A. and Weigel, R. S. and Thomas, D. and Bor, D. and Oughton, E. J. and Gaunt, C. T. and Balch, C. C. and Wiltberger, M. J. and Pulkkinen, A.}
+}
+
+@article{horton_test_2012,
+  title = {A Test Case for the Calculation of Geomagnetically Induced Currents},
+  author = {Horton, Randy and Boteler, David and Overbye, Thomas J. and Pirjola, Risto and Dugan, Roger C.},
+  journal = {IEEE Transactions on Power Delivery},
+  volume = {27},
+  number = {4},
+  pages = {2368--2373},
+  year = {2012},
+  doi = {10.1109/TPWRD.2012.2206407}
+}
+
+@article{lucas2020100year,
+  title = {100-year Geoelectric Hazard Analysis for the U.S. High-Voltage Power Grid},
+  author = {Lucas, G. M. and Love, J. J. and Kelbert, A. and Bedrosian, P. A. and Rigler, E. J.},
+  journal = {Space Weather},
+  volume = {18},
+  year = {2020},
+  doi = {10.1029/2019SW002329}
 }
 ```
 
