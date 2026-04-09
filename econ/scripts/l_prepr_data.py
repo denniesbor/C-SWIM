@@ -34,7 +34,7 @@ return_periods = np.arange(50, 251, 25)
 def load_and_aggregate_tiles():
     """Load all tile files and aggregate economic data by substation"""
     land_mask_dir = DATA_LOC / "land_mask"
-    tile_dir = land_mask_dir / "tiles"
+    tile_dir = land_mask_dir / "coarse_interpolation_tiles"
 
     parts = []
     for fp in tile_dir.glob("tile_*.gpkg"):

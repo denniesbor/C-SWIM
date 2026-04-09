@@ -1,18 +1,3 @@
-misc
-otherDatasets
-venv
-py_scripts/data
-cache
-data/admittance_matrix
-data/econ_data
-data/Electric__Power_Transmission_Lines/
-data/EMTF
-data/geomag_data
-data/grid_processed/*
-data/statistical_analysis/*
-data/substation_locations/*__pycache__/
-*.pyc
-
 # Python
 __pycache__/
 *.py[cod]
@@ -23,60 +8,69 @@ dist/
 build/
 *.whl
 
-# Virtual environments
-venv/
-env/
-.venv/
-ENV/
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Jupyter
-.ipynb_checkpoints/
-
-# OS
 .DS_Store
 Thumbs.db
 
 # Logs
+logs/
 *.log
-tmp
+
+# Archives
+*.zst
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# Scratch
+tmp/
 *.tmp
+*.html
 test.py
-AdmUntitled.ipynb
-analysis_nb.ipynb
-data/admittance_matrix.old/
-data/gic.old/
+val_jumps.png
+gic_df_old.csv
+figures_old/
+
+# Data
+data/admittance_matrix/
+data/admittance_matrix_v1/
+data/econ_data/
+data/Electric__Power_Transmission_Lines/
+data/EMTF/
+data/geomag_data/
+data/gannon_gic_compact/
+data/gannon_gnd_gic/
+data/gannon_gic_processed/
 data/gic/
 data/gic_eff/
 data/gnd_gic/
 data/gnd_gic_processed/
+data/grid_processed/
 data/horton_grid/
+data/kp_ap_indices/
 data/peak_times_1.npy
-data/powerline_ways/
 data/regression/
+data/statistical_analysis/
 data/storm_maxes/
 data/substation_locations/
+data/substation_locations_relations/
 data/substations_raw.csv
-logs/
-preprocess/dl_power_grid.py
-test.py
-tmp/
-tva_application.ipynb
-viz/
-data/gannon_gnd_gic/
+data/grid_mapping.csv
 
-# Ignore zst files
-*.zst
-# Ignore tar files
-*.tar
-*.tar.gz
-*.tgz
-# Ignore zip files
-*.zip
-*.rar
-*.7z
+# Figures
+figures/
+
+# CSV outputs
+*.csv
+viz/debug.py

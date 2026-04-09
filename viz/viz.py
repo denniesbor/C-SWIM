@@ -7,6 +7,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 import matplotlib as mpl
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
@@ -24,9 +25,10 @@ from configs import (
     setup_logger,
     PROCESS_GND_FILES,
     get_data_dir,
-    DATA_DIR
+    DATA_DIR,
+    setup_matplotlib,
 )
-from econ.viz.plot_utils import (
+from viz.plot_utils import (
     setup_map,
     linestring_to_array,
     process_substations,
@@ -47,14 +49,7 @@ from econ.scripts.l_prepr_data import (
 DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger("visualization module")
 
-plt.rcParams.update({
-    "font.family": "serif",
-    "font.serif": ["Times New Roman"],
-    "mathtext.fontset": "custom",
-    "mathtext.rm": "Times New Roman",
-    "mathtext.it": "Times New Roman:italic",
-    "mathtext.bf": "Times New Roman:bold",
-})
+setup_matplotlib()
 
 warnings.filterwarnings("ignore")
 
@@ -2397,99 +2392,142 @@ if __name__ == "__main__":
         else "gnd_gic" if PROCESS_GND_FILES else "eff_gic"
     )
 
-    logger.info("Generating Visualizations - Hazard Maps")
-    create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines)
+    # logger.info("Generating Visualizations - Hazard Maps")
+    # create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines)
     
-    logger.info("Generating Visualizations - Hazard Event Maps")
-    create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, mt_coords, df_lines, regen_grids=True)
+    # logger.info("Generating Visualizations - Hazard Event Maps")
+    # create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, mt_coords, df_lines, regen_grids=True)
     
-    logger.info("Generating Visualizations - B and E Field Maps")
-    create_B_E_maps(
-        e_fields, b_fields,
-        hydro_quebec_e, hydro_quebec_b,
-        halloween_e, halloween_b,
-        st_patricks_e, st_patricks_b,
-        gannon_e, gannon_b,
-        mt_coords, df_lines,
-        mode="events", regen_grids=True
+    # logger.info("Generating Visualizations - B and E Field Maps")
+    # create_B_E_maps(
+    #     e_fields, b_fields,
+    #     hydro_quebec_e, hydro_quebec_b,
+    #     halloween_e, halloween_b,
+    #     st_patricks_e, st_patricks_b,
+    #     gannon_e, gannon_b,
+    #     mt_coords, df_lines,
+    #     mode="events", regen_grids=True
+    # )
+
+    # logger.info("Generating Visualizations - B and E Field Maps for Extreme Events")
+    # create_B_E_maps(
+    #     e_fields, b_fields,
+    #     hydro_quebec_e, hydro_quebec_b,
+    #     halloween_e, halloween_b,
+    #     st_patricks_e, st_patricks_b,
+    #     gannon_e, gannon_b,
+    #     mt_coords, df_lines,
+    #     mode="extremes", regen_grids=True
+    # )
+    
+    # create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False)
+    # create_event_ratio_maps(
+    #     e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e,
+    #     mt_coords, df_lines, regen_grids=False
+    # )
+
+    # logger.info("Generating Visualizations - TLs and Subs")
+    # create_tl_sub_visualization(ss_gdf_pkl, df_lines)
+
+    # plot_vuln_trafos(mean_vuln_all, df_lines, file_suffix=filename_suffix)
+    
+    # plot_gnd_gic_panels(ds, df_substations, file_suffix=filename_suffix)
+
+    # plot_econo_naics(io_results_df, model_type="io", file_suffix=filename_suffix)
+    # plot_socio_economic_impact(
+    #     io_results_df, confidence_df, model_type="io", file_suffix=filename_suffix
+    # )
+
+    # plot_econo_naics_dodged(io_results_df, model_type="io", file_suffix=filename_suffix)
+    
+    # Substations data
+    voronoi_gdf = gpd.read_file(DATA_LOC / "processed_voronoi" / "voronoi_polygons_clipped.geojson")
+    
+    # Pivot vulnerability: one row per substation, columns = scenarios
+    vuln_pivot = (
+        mean_vuln_all
+        .groupby(['sub_id', 'scenario'])['mean_failure_prob']
+        .mean()
+        .unstack('scenario')
+        .reset_index()
     )
 
-    logger.info("Generating Visualizations - B and E Field Maps for Extreme Events")
-    create_B_E_maps(
-        e_fields, b_fields,
-        hydro_quebec_e, hydro_quebec_b,
-        halloween_e, halloween_b,
-        st_patricks_e, st_patricks_b,
-        gannon_e, gannon_b,
-        mt_coords, df_lines,
-        mode="extremes", regen_grids=True
-    )
-    
-    create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False)
-    create_event_ratio_maps(
-        e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e,
-        mt_coords, df_lines, regen_grids=False
-    )
+    # Ensure sub_id is string in both dataframes
+    vuln_pivot['sub_id'] = vuln_pivot['sub_id'].astype(str)
+    aggregate_gdf['sub_id'] = aggregate_gdf['sub_id'].astype(str)
 
-    logger.info("Generating Visualizations - TLs and Subs")
-    create_tl_sub_visualization(ss_gdf_pkl, df_lines)
+    # Merge: substation with pop/econ + failure probabilities
+    substation_risk = aggregate_gdf.merge(vuln_pivot, on='sub_id', how='left')
 
-    plot_vuln_trafos(mean_vuln_all, df_lines, file_suffix=filename_suffix)
-    
-    plot_gnd_gic_panels(ds, df_substations, file_suffix=filename_suffix)
+    # Add coordinates from mean_vuln_all
+    sub_coords = mean_vuln_all.groupby('sub_id')[['latitude', 'longitude']].first().reset_index()
+    sub_coords['sub_id'] = sub_coords['sub_id'].astype(str)
+    substation_risk = substation_risk.merge(sub_coords, on='sub_id', how='left')
 
-    plot_econo_naics(io_results_df, model_type="io", file_suffix=filename_suffix)
-    plot_socio_economic_impact(
-        io_results_df, confidence_df, model_type="io", file_suffix=filename_suffix
-    )
 
-    plot_econo_naics_dodged(io_results_df, model_type="io", file_suffix=filename_suffix)
+    export_data = {
+        'geo': {
+            'transmission_lines': df_lines,
+            'substations': df_substations,
+            'vulnerable_substations': mean_vuln_all,  # sub_id, scenario, failure_prob
+        },
+        'fields': {
+            'mt_coords': mt_coords,
+            'mt_names': mt_names,
+            'e_fields': e_fields,
+            'b_fields': b_fields,
+            'gannon_e': gannon_e,
+            'gannon_b': gannon_b,
+            'halloween_e': halloween_e,
+            'halloween_b': halloween_b,
+            'st_patricks_e': st_patricks_e,
+            'st_patricks_b': st_patricks_b,
+            'hydro_quebec_e': hydro_quebec_e,
+            'hydro_quebec_b': hydro_quebec_b,
+        },
+        'economics': {
+            'io_results': io_results_df,
+            'confidence_intervals': confidence_df,
+        },
+        'spatial_risk': {
+            'substation_risk': substation_risk,  # sub_id, POP20, GDP_*, EST_*, failure_prob_*
+            'voronoi_polygons': voronoi_gdf,      # substation service areas
+            'aggregate_gdf': aggregate_gdf,       # raw dasymetric allocation
+        },
+        'metadata': {
+            'scenarios': list(vuln_pivot.columns.drop('sub_id')),
+            'units': {
+                'e_field': 'V/km', 
+                'b_field': 'nT', 
+                'voltage': 'V',
+                'failure_prob': 'probability (0-1)',
+                'population': 'persons',
+                'gdp': 'million $/day',
+            },
+            'crs': 'EPSG:4326',
+            'notes': {
+                'substation_risk': 'Population/GDP allocated to substations via Voronoi dasymetric interpolation',
+                'pop_at_risk': 'Calculate as POP20 * failure_prob for each scenario',
+            }
+        }
+    }
 
-    # export_data = {
-    #     'geo': {
-    #         'transmission_lines': df_lines,
-    #         'substations': df_substations,
-    #         'vulnerable_substations': mean_vuln_all,
-    #     },
-    #     'fields': {
-    #         'mt_coords': mt_coords,
-    #         'mt_names': mt_names,
-    #         'e_fields': e_fields,
-    #         'b_fields': b_fields,
-    #         'gannon_e': gannon_e,
-    #         'gannon_b': gannon_b,
-    #         'halloween_e': halloween_e,
-    #         'halloween_b': halloween_b,
-    #         'st_patricks_e': st_patricks_e,
-    #         'st_patricks_b': st_patricks_b,
-    #         'hydro_quebec_e': hydro_quebec_e,
-    #         'hydro_quebec_b': hydro_quebec_b,
-    #     },
-    #     'economics': {
-    #         'io_results': io_results_df,
-    #         'confidence_intervals': confidence_df,
-    #     },
-    #     'metadata': {
-    #         'scenarios': [100, 150, 200, 250, 'gannon', 'halloween', 'st_patricks', 'hydro_quebec'],
-    #         'units': {'e_field': 'V/km', 'b_field': 'nT', 'voltage': 'V'},
-    #         'crs': 'EPSG:4326',
-    #     }
-    # }
+    export_dir = DATA_LOC / "wsj"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    export_path = export_dir / "viz_export_data.pkl"
+    with open(export_path, 'wb') as f:
+        pickle.dump(export_data, f)
 
-    # export_path = DATA_LOC / "wsj" / "viz_export_data.pkl"
-    # with open(export_path, 'wb') as f:
-    #     pickle.dump(export_data, f)
+    print(f"Exported: {export_path} ({export_path.stat().st_size / 1e6:.1f} MB)")
 
-    # print(f"Exported: {export_path} ({export_path.stat().st_size / 1e6:.1f} MB)")
-
-    # EXPORT_GRIDS = True
-    # if EXPORT_GRIDS:
-    #     grids = {}
-    #     for grid_file in (DATA_LOC / "viz_data").glob("grid_*.pkl"):
-    #         with open(grid_file, 'rb') as f:
-    #             grids[grid_file.stem] = pickle.load(f)
+    EXPORT_GRIDS = True
+    if EXPORT_GRIDS:
+        grids = {}
+        for grid_file in (DATA_LOC / "viz_data").glob("grid_*.pkl"):
+            with open(grid_file, 'rb') as f:
+                grids[grid_file.stem] = pickle.load(f)
         
-    #     grid_path = DATA_LOC / "wsj" / "viz_grids_data.pkl"
-    #     with open(grid_path, 'wb') as f:
-    #         pickle.dump(grids, f)
-    #     print(f"Grids: {grid_path} ({grid_path.stat().st_size / 1e9:.2f} GB)")
+        grid_path = DATA_LOC / "wsj" / "viz_grids_data.pkl"
+        with open(grid_path, 'wb') as f:
+            pickle.dump(grids, f)
+        print(f"Grids: {grid_path} ({grid_path.stat().st_size / 1e9:.2f} GB)")

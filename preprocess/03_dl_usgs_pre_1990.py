@@ -15,6 +15,7 @@ import pandas as pd
 import xarray as xr
 from bezpy import mag
 from scipy import signal
+import numpy as np
 
 from configs import setup_logger, get_data_dir
 
@@ -98,7 +99,7 @@ def process_usgs_magnetic_files(file_path):
     # Fill NaNs at the start and end, then interpolate remaining NaNs
     for component in ["X", "Y", "Z", "F"]:
 
-        data[component] = (
+        s = (
             data[component]
             .interpolate(method="nearest")
             .fillna(method="bfill")
@@ -106,7 +107,8 @@ def process_usgs_magnetic_files(file_path):
         )
 
         # Detrend data linearly
-        data[component] = signal.detrend(data[component])
+        # data[component] = signal.detrend(data[component])
+        data[component] = s - np.nanmedian(s.to_numpy())
 
     ds = xr.Dataset.from_dataframe(data)
     Latitude = float(headers["geodetic latitude"])

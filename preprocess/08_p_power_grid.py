@@ -16,7 +16,7 @@ import geopandas as gpd
 import bezpy
 from shapely.ops import substring
 
-from configs import setup_logger, get_data_dir, cut_off_volt
+from configs import setup_logger, get_data_dir, cut_off_volt, USE_OLD_SUB_DATA
 
 warnings.simplefilter("ignore")
 PROJ = "EPSG:5070"  # projected CRS for distance work
@@ -198,7 +198,7 @@ def prepare_substations_for_grid_analysis(substation_gdf):
 def graph_node_edges(
     substation_gdf: gpd.GeoDataFrame,
     translines_gdf: gpd.GeoDataFrame,
-    buffer_distance: float = 30,
+    buffer_distance: float = 60,
     wgs84: str = "EPSG:4326",
     proj: str = "EPSG:5070",
 ):
@@ -236,7 +236,6 @@ def graph_node_edges(
         "SUB_2": "SUB_2",
         "length": "LINE_LEN",
     }
-
     tl_gdf = inter_gdf.copy()
     tl_cols = [c for c in rename if c in tl_gdf.columns]
     tl_cols.append(tl_gdf.geometry.name)
@@ -689,10 +688,36 @@ if __name__ == "__main__":
         pickle.dump(translines_gdf, f)
 
     logger.info("[D] Loading and processing substations")
-    substations_data_path = (
-        DATA_LOC / "substation_locations" / "us_substations_full.geojson"
-    )
-    substation_gdf = load_and_process_substations(substations_data_path, ferc_gdf_path)
+
+    if USE_OLD_SUB_DATA:
+        substation_gdf_path = (
+            DATA_LOC / "substation_locations" / "old" / "us_substations.geojson"
+        )
+
+    else:
+        full_path = DATA_LOC / "substation_locations" / "us_substations_full.geojson"
+        rel_path = (
+            DATA_LOC
+            / "substation_locations_relations"
+            / "us_substations_relations.geojson"
+        )
+
+        gdf_full = gpd.read_file(full_path).to_crs("EPSG:4326")
+        gdf_rel = gpd.read_file(rel_path).to_crs("EPSG:4326")
+
+        substations_merged = pd.concat([gdf_full, gdf_rel], ignore_index=True)
+        substations_merged = substations_merged.drop_duplicates(
+            subset="osmid", keep="first"
+        )
+        substations_merged = substations_merged.dropna(subset=["geometry"])
+
+        substation_gdf_path = (
+            DATA_LOC / "substation_locations" / "us_substations_full_merged.geojson"
+        )
+        substations_merged.to_file(substation_gdf_path, driver="GeoJSON")
+
+    substation_gdf = load_and_process_substations(substation_gdf_path, ferc_gdf_path)
+
     logger.info("[E] Saving processed substations")
     substation_gdf.to_file(dir_out / "processed_substations.gpkg", driver="GPKG")
     with open(dir_out / "processed_substations.pkl", "wb") as f:
@@ -700,7 +725,7 @@ if __name__ == "__main__":
 
     logger.info("[F] Building graph topology")
     substation_gdf, tl_gdf_subset, ss_gdf_subset = graph_node_edges(
-        substation_gdf, translines_gdf
+        substation_gdf, translines_gdf, buffer_distance=150
     )
 
     logger.info("[G] Extracting EHV lines and connections")
@@ -744,3 +769,5 @@ if __name__ == "__main__":
             ),
             f,
         )
+
+# %%

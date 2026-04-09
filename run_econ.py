@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-Space Weather Economic Impact Analysis - main orchestrator script
-Author: Dennies Bor, Aug 2025
-"""
+# Author: Dennies Bor
+# Role: Master runner for economic impact pipeline
+# Usage: python run_econ.py [preprocess|analysis|all] [--alpha-beta]
+
 import argparse
 import subprocess
 import threading
@@ -11,7 +11,6 @@ import sys
 import os
 from pathlib import Path
 
-# Import from unified configs
 from configs import (
     setup_logger,
     get_data_dir,
@@ -28,9 +27,6 @@ from configs import (
 logger = setup_logger("Economic Model Pipeline")
 ROOT = Path(__file__).resolve().parent
 
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 
 class ProgressTracker:
     def __init__(self, script_name):
@@ -45,12 +41,12 @@ class ProgressTracker:
     def stop(self):
         self.running = False
         elapsed = time.time() - self.start_time
-        logger.info(f"✅ Completed {self.script_name} in {elapsed:.1f}s")
+        logger.info(f"Completed {self.script_name} in {elapsed:.1f}s")
 
     def _show_progress(self):
         while self.running:
             elapsed = time.time() - self.start_time
-            logger.info(f"⏳ Running {self.script_name}... {elapsed:.0f}s elapsed")
+            logger.info(f"Running {self.script_name}... {elapsed:.0f}s elapsed")
             time.sleep(30)
 
 
@@ -116,7 +112,7 @@ def essential_gic_eff() -> bool:
     if USE_ALPHA_BETA_SCENARIO:
         if not ALPHA_BETA_GIC_FILE.exists():
             raise FileNotFoundError(
-                f"Missing alpha–beta GIC file:\n  {ALPHA_BETA_GIC_FILE}"
+                f"Missing alpha-beta GIC file:\n  {ALPHA_BETA_GIC_FILE}"
             )
         return True
     for gic_dir_str in EFF_GIC_DIR:
@@ -161,40 +157,6 @@ def essential_econ_analysis() -> bool:
     return True
 
 
-def essential_viz() -> bool:
-    files = []
-
-    if USE_ALPHA_BETA_SCENARIO:
-        files = [
-            FIGURES_DIR / "io_model_results_alpha_beta.csv",
-            FIGURES_DIR / "confidence_intervals_alpha_beta.csv",
-        ]
-    elif PROCESS_GND_FILES:
-        files = [
-            FIGURES_DIR / "io_model_results_gnd_gic.csv",
-            FIGURES_DIR / "confidence_intervals_gnd_gic.csv",
-        ]
-    else:
-        files = [
-            FIGURES_DIR / "io_model_results.csv",
-            FIGURES_DIR / "confidence_intervals.csv",
-        ]
-
-    missing = [f for f in files if not f.exists()]
-    if missing:
-        scenario_type = (
-            "alpha_beta"
-            if USE_ALPHA_BETA_SCENARIO
-            else ("gnd_gic" if PROCESS_GND_FILES else "gic_sim")
-        )
-        raise FileNotFoundError(
-            f"Missing visualization essentials for {scenario_type} scenario. "
-            "Run `econ/scripts/econ_analysis.py` first to generate required files.\n"
-            + "\n".join([f"  {f}" for f in missing])
-        )
-    return True
-
-
 def run_preprocess():
     tracker = ProgressTracker("Preprocessing")
     tracker.start()
@@ -229,34 +191,15 @@ def run_analysis():
         tracker.stop()
 
 
-def run_viz():
-    tracker = ProgressTracker("Visualization")
-    tracker.start()
-    try:
-        logger.info("Running visualization...")
-        env = os.environ.copy()
-
-        cmd = [sys.executable, "-m", "econ.viz.viz"]
-        res = subprocess.run(cmd, check=False, env=env, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.warning(
-                "`python -m econ.viz.viz` failed; falling back to file. stderr:\n"
-                + res.stderr.strip()
-            )
-            subprocess.run([sys.executable, "econ/viz/viz.py"], check=True, env=env)
-    finally:
-        tracker.stop()
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SPWIO Pipeline Entry Point")
+    parser = argparse.ArgumentParser(description="Economic impact pipeline entry point")
     parser.add_argument(
-        "step", choices=["preprocess", "analysis", "viz", "all"], help="Step to run"
+        "step", choices=["preprocess", "analysis", "all"], help="Step to run"
     )
     parser.add_argument(
         "--alpha-beta",
         action="store_true",
-        help="Use alpha–beta scenario mode for GIC processing",
+        help="Use alpha-beta scenario mode for GIC processing",
     )
     args = parser.parse_args()
 
@@ -280,18 +223,8 @@ if __name__ == "__main__":
             essential_econ_analysis()
             run_analysis()
 
-        elif args.step == "viz":
-            essential_p_econ_data()
-            essential_downsample_nlcd()
-            essential_raster_interp()
-            essential_gic_eff()
-            essential_build_tech_sam()
-            essential_econ_analysis()
-            essential_viz()
-            run_viz()
-
         elif args.step == "all":
-            logger.info("Running full pipeline: preprocess → analysis → viz")
+            logger.info("Running full pipeline: preprocess -> analysis")
             essential_p_econ_data()
             essential_downsample_nlcd()
             run_preprocess()
@@ -301,9 +234,6 @@ if __name__ == "__main__":
             essential_build_tech_sam()
             essential_econ_analysis()
             run_analysis()
-
-            essential_viz()
-            run_viz()
 
     except FileNotFoundError as e:
         logger.error(str(e))

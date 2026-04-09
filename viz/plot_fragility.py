@@ -9,15 +9,15 @@ from scipy.stats import norm, weibull_min
 from configs import (
     setup_logger,
     get_data_dir,
-    FIGURES_DIR
+    FIGURES_DIR,
+    setup_matplotlib,
 )
 
 
 DATA_LOC = get_data_dir(econ=True)
 logger = setup_logger("visualization module")
 
-plt.rcParams["font.family"] = "serif"
-plt.rcParams["font.serif"] = ["Times New Roman"] + plt.rcParams["font.serif"]
+setup_matplotlib()
 
 warnings.filterwarnings("ignore")
 

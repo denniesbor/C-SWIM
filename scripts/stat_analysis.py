@@ -14,6 +14,7 @@ import warnings
 from functools import partial
 from multiprocessing import cpu_count
 from datetime import datetime, timedelta
+from multiprocessing import get_context
 
 import h5py
 import powerlaw
@@ -60,16 +61,6 @@ def extract_max_values(maxB_arr, maxE_arr, maxV_arr, indices):
 
 
 def lognormal_ppf(y, mu, sigma, xmin):
-    """Return the lognormal percent-point function adjusted by xmin."""
-    erf = scipy.special.erf
-    erfinv = scipy.special.erfinv
-    Q = erf((np.log(xmin) - mu) / (np.sqrt(2) * sigma))
-    Q = Q * y - y + 1.0
-    Q = erfinv(Q)
-    return np.exp(mu + np.sqrt(2) * sigma * Q)
-
-
-def lognormal_ppf(y, mu, sigma, xmin):
     erf = scipy.special.erf
     erfinv = scipy.special.erfinv
     eps = 1e-12
@@ -89,21 +80,6 @@ def lognormal_ppf(y, mu, sigma, xmin):
     val = mu + np.sqrt(2.0) * sigma * Z
     # prevent overflow in exp
     return np.exp(np.clip(val, np.log(eps), 7.0e2))
-
-
-def fit_data(data):
-    """Fit a lognormal model to |data| and store sign for back-transformation."""
-    sign_vector = np.sign(np.mean(np.nan_to_num(data, nan=0)))
-    abs_data = np.abs(data)
-    with np.errstate(all="ignore"), warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        fit = powerlaw.Fit(abs_data, xmin=np.min(abs_data), verbose=False)
-    fitting_func = fit.lognormal
-    if np.any(np.isnan(fitting_func.cdf())):
-        warnings.warn("No lognormal fit (changing to positive)")
-        fitting_func = fit.lognormal_positive
-    fitting_func.sign_vector = sign_vector
-    return fitting_func
 
 
 def fit_data(data):
@@ -229,7 +205,6 @@ def bootstrap_analysis(
         return_periods=return_periods,
         quantity=quantity,
     )
-    from multiprocessing import get_context
 
     # Use "spawn" context to avoid issues on Windows
     with get_context("spawn").Pool(processes=cpu_count()) as pool:
@@ -369,8 +344,8 @@ if __name__ == "__main__":
     halloween_start = datetime(2003, 10, 29, 0)
     halloween_end = datetime(2003, 11, 3, 0)
 
-    gannon_start = datetime(2024, 5, 9, 0)  # Mother's Day storm in 2024
-    gannon_end = gannon_start + timedelta(days=2)  # 1 day duration
+    gannon_start = datetime(2024, 5, 9, 14)  # Mother's Day storm in 2024
+    gannon_end = datetime(2024, 5, 12, 14)  # End of Gannon storm
 
     st_patricks_start = datetime(2015, 3, 17, 0)  # St. Patrick's Day storm 2015
     st_patricks_end = st_patricks_start + timedelta(days=1)  # 1 day duration

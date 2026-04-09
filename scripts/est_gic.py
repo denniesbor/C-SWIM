@@ -8,27 +8,17 @@ Authors: Dennies and Ed
 import os
 import gc
 import pickle
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import h5py
-import torch
+import torch  # CPU-only solve; GPU path removed for stability
 import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy import signal
-import geopandas as gpd
-
-from scipy.sparse.linalg import spsolve
-from shapely.geometry import LineString
 from scipy.ndimage import gaussian_filter1d
 
-import numpy as np
-import scipy.sparse as sp
-from scipy.linalg import solve as dense_solve, lstsq as dense_lstsq
-from scipy.sparse.linalg import splu, lsqr
-
-from build_admittance_matrix import (
+from scripts.build_admittance_matrix import (
     process_substation_buses,
     random_admittance_matrix,
     get_transformer_samples,
@@ -118,36 +108,27 @@ def load_and_process_gic_data(DATA_LOC, df_lines, results_path):
 
     tmpl_dir = DATA_LOC / "storm_maxes"
 
-    # Read the 1989 delaunay array
-    arr_v_march89 = np.load(tmpl_dir / "delaunay_v_march89.npy")
-
-    # Read the gannon array data
+    # Use Gannon-only polarity — 1989 fallback removed for consistency
     arr_v_gannon = np.load(tmpl_dir / "delaunay_v_gannon.npy")
-
-    # Append signage
     sgn_gannon = v_direction(arr_v_gannon)  # (L,)
-    sgn_march89 = v_direction(arr_v_march89)  # (L,)
 
-    # Map to df_lines row order using existing index mapping
-    sgn_gannon_df = np.full(df_lines.shape[0], np.nan, dtype=float)
-    sgn_march89_df = np.full(df_lines.shape[0], np.nan, dtype=float)
-    sgn_gannon_df[mask] = sgn_gannon[indices[mask]]
-    sgn_march89_df[mask] = sgn_march89[indices[mask]]
+    # Map to df_lines row order — default +1 for boundary lines
+    sgn_full = np.ones(df_lines.shape[0], dtype=float)
+    sgn_full[mask] = sgn_gannon[indices[mask]]
 
-    df_lines["sgn_gannon"] = sgn_gannon_df
-    df_lines["sgn_march89"] = sgn_march89_df
+    # Log how many lines got default polarity
+    n_default = np.sum(sgn_full == 1.0) - np.sum(sgn_gannon[indices[mask]] == 1.0)
+    logger.info(
+        f"Polarity: {mask.sum()} lines from Gannon, "
+        f"{(~mask).sum()} boundary lines assigned default +1"
+    )
 
-    sgn = df_lines["sgn_gannon"].to_numpy()
-    if "sgn_march89" in df_lines.columns:
-        sgn = np.where(
-            np.isfinite(sgn) & (sgn != 0), sgn, df_lines["sgn_march89"].to_numpy()
-        )
-    sgn = np.where(np.isfinite(sgn) & (sgn != 0), sgn, 1.0)
+    df_lines["sgn"] = sgn_full
 
     for period in return_periods:
         col = f"V_{period}"
         if col in df_lines.columns:
-            df_lines[col] = df_lines[col].to_numpy() * sgn
+            df_lines[col] = df_lines[col].to_numpy() * sgn_full
 
     logger.info("GIC data loaded and processed successfully.")
 
@@ -362,52 +343,26 @@ def can_use_float16(arr):
 
 
 def nodal_voltage_calculation(Y_total, injections_data):
-    """Calculate nodal voltages using PyTorch with robust fallbacks."""
-    logger.info("Calculating nodal voltages using PyTorch...")
+    """Calculate nodal voltages using PyTorch on CPU."""
+    logger.info("Calculating nodal voltages...")
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        torch.backends.cudnn.benchmark = True
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
-        matrix_size_bytes = Y_total.nbytes
-        total_required = matrix_size_bytes * 2.0
-        free_memory = torch.cuda.get_device_properties(
-            0
-        ).total_memory - torch.cuda.memory_allocated(0)
-        if total_required > free_memory:
-            logger.info(
-                f"Matrix too large for GPU ({total_required/1e9:.1f}GB needed, {free_memory/1e9:.1f}GB free); using CPU"
-            )
-            device = torch.device("cpu")
-    else:
-        gc.collect()
-
-    logger.info(f"Using device: {device}")
-
-    Y_tensor = torch.tensor(Y_total, dtype=torch.float32, device=device)
-
-    # Symmetrize (admittance should be symmetric up to numerical noise)
-    Y_tensor = 0.5 * (Y_tensor + Y_tensor.T)
+    device = torch.device("cpu")
 
     valid_keys = [k for k, v in injections_data.items() if v is not None]
     if not valid_keys:
         return {k: None for k in injections_data}
 
+    Y_tensor = torch.tensor(Y_total, dtype=torch.float64, device=device)
+    Y_tensor = 0.5 * (Y_tensor + Y_tensor.T)
+
     injection_batch = torch.stack(
         [
-            torch.tensor(injections_data[k], dtype=torch.float32, device=device)
+            torch.tensor(injections_data[k], dtype=torch.float64, device=device)
             for k in valid_keys
         ],
         dim=-1,
     )
 
-    # Sanitize inputs
     if not torch.isfinite(Y_tensor).all():
         logger.warning("Y_tensor contains non-finite values, cleaning...")
         Y_tensor = torch.nan_to_num(Y_tensor, nan=0.0, posinf=0.0, neginf=0.0)
@@ -418,19 +373,14 @@ def nodal_voltage_calculation(Y_total, injections_data):
             injection_batch, nan=0.0, posinf=0.0, neginf=0.0
         )
 
-    # Always solve in float64 for stability
-    Y64 = Y_tensor.to(torch.float64)
-    B64 = injection_batch.to(torch.float64)
-
-    I = torch.eye(Y64.shape[0], dtype=torch.float64, device=Y64.device)
+    I = torch.eye(Y_tensor.shape[0], dtype=torch.float64, device=device)
     V_n = None
 
-    # 1) Try Cholesky with small regularization
     for reg in (1e-6, 1e-5, 1e-4, 1e-3):
         try:
-            Y_reg = Y64 + reg * I
+            Y_reg = Y_tensor + reg * I
             L = torch.linalg.cholesky(Y_reg)
-            V_try = torch.cholesky_solve(B64, L)
+            V_try = torch.cholesky_solve(injection_batch, L)
             if torch.isfinite(V_try).all():
                 V_n = V_try
                 logger.info(f"Cholesky succeeded with reg={reg}")
@@ -438,12 +388,11 @@ def nodal_voltage_calculation(Y_total, injections_data):
         except Exception as e:
             logger.debug(f"Cholesky failed (reg={reg}): {e}")
 
-    # 2) If Cholesky failed, try direct solve (LU w/ pivoting)
     if V_n is None:
         for reg in (1e-6, 1e-5, 1e-4, 1e-3):
             try:
-                Y_reg = Y64 + reg * I
-                V_try = torch.linalg.solve(Y_reg, B64)
+                Y_reg = Y_tensor + reg * I
+                V_try = torch.linalg.solve(Y_reg, injection_batch)
                 if torch.isfinite(V_try).all():
                     V_n = V_try
                     logger.info(f"Direct solve succeeded with reg={reg}")
@@ -451,22 +400,19 @@ def nodal_voltage_calculation(Y_total, injections_data):
             except Exception as e:
                 logger.debug(f"Direct solve failed (reg={reg}): {e}")
 
-    # 3) Final fallback: damped least squares
     if V_n is None:
         logger.info("Using damped least squares fallback")
         lam = 1e-4
-        V_n = torch.linalg.lstsq(Y64 + lam * I, B64).solution
+        V_n = torch.linalg.lstsq(Y_tensor + lam * I, injection_batch).solution
 
-    V_n = V_n.to(torch.float32)
-    results = {k: V_n[:, i].detach().cpu().numpy() for i, k in enumerate(valid_keys)}
+    results = {
+        k: V_n[:, i].numpy().astype(np.float32) for i, k in enumerate(valid_keys)
+    }
 
-    # Final guard: replace any residual NaNs with zero
     for k in results:
         if not np.isfinite(results[k]).all():
             logger.warning(f"Found non-finite values in {k}, setting to zero")
-            r = results[k]
-            r[~np.isfinite(r)] = 0.0
-            results[k] = r
+            results[k] = np.nan_to_num(results[k], nan=0.0, posinf=0.0, neginf=0.0)
 
     logger.info("Nodal voltage calculation completed.")
     return results
@@ -518,7 +464,7 @@ def process_gannon(DATA_LOC, df_lines, results_path, peak_time=False, res=30):
         np.save(DATA_LOC / "peak_times.npy", peak_times)
 
     else:
-        start_date = np.datetime64("2024-05-10")
+        start_date = np.datetime64("2024-05-09T14:00:00")
 
         mask = (gannon_times >= start_date) & (
             gannon_times.astype("datetime64[m]").view("int64") % res == 0
@@ -634,7 +580,7 @@ def solve_total_nodal_gic(Y_e_reduced, V_nodal, non_zero_indices, n_nodes):
     return full
 
 
-def main(generate_grid_only=False, gannon_storm_only=False):
+def main(generate_grid_only=False, gannon_storm_only=False, start_idx=0, end_idx=None):
     """Compute GICs and optionally export storm-only results."""
     results_path = "statistical_analysis/geomagnetic_data_return_periods.h5"
 
@@ -680,6 +626,10 @@ def main(generate_grid_only=False, gannon_storm_only=False):
 
     logger.info("Starting GIC calculations...")
     for i, trafo_data in enumerate(trafos_data):
+        if i < start_idx:
+            continue
+        if end_idx is not None and i >= end_idx:
+            break
 
         df_ss_iter = randomize_grounding_resistance(
             df_substations_info, seed=seed_base + i
@@ -981,7 +931,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Run Gannon-storm-only workflow.",
     )
+    parser.add_argument(
+        "--start",
+        type=int,
+        default=0,
+        help="Starting iteration index (default: 0)",
+    )
+    parser.add_argument(
+        "--end",
+        type=int,
+        default=None,
+        help="Ending iteration index, exclusive (default: all)",
+    )
     args = parser.parse_args()
-    main(gannon_storm_only=args.gannon_only)
+    main(gannon_storm_only=args.gannon_only, start_idx=args.start, end_idx=args.end)
 
 # %%

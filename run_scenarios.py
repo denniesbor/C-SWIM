@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
-"""
-Run GIC analysis scenarios.
-1. Calculate storm maxima
-2. Fit power law
-3. Estimate GIC (includes admittance matrix)
-"""
+# Author: Dennies Bor
+# Role: Master runner for GIC analysis scenarios
+# Usage: python run_scenarios.py [storm|stat|gic|admittance|all] [--gannon-only]
+
 import os
 import sys
 import argparse
 import subprocess
+import threading
+import time
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent))
-
 from configs import setup_logger
-from preprocess_wrapper import ProgressTracker
 
 logger = setup_logger(log_file="logs/run_scenarios.log")
+
+
+class ProgressTracker:
+    def __init__(self, script_name):
+        self.script_name = script_name
+        self.start_time = time.time()
+        self.running = True
+        self.thread = threading.Thread(target=self._show_progress, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        elapsed = time.time() - self.start_time
+        logger.info(f"Completed {self.script_name} in {elapsed:.1f}s")
+
+    def _show_progress(self):
+        while self.running:
+            elapsed = time.time() - self.start_time
+            logger.info(f"Running {self.script_name}... {elapsed:.0f}s elapsed")
+            time.sleep(30)
 
 
 def run_script(script_name, extra_args=None):
@@ -35,11 +54,11 @@ def run_script(script_name, extra_args=None):
             [sys.executable, str(script_path), *extra_args], check=True, env=env
         )
         progress.stop()
-        logger.info(f"✓ {script_name} completed")
+        logger.info(f"Completed {script_name}")
         return True
     except subprocess.CalledProcessError:
         progress.stop()
-        logger.error(f"✗ {script_name} failed")
+        logger.error(f"Failed {script_name}")
         return False
 
 
@@ -58,11 +77,11 @@ def main():
     args = parser.parse_args()
 
     script_map = {
-        "storm": ["calc_storm_maxes.py"],
-        "stat": ["stat_analysis.py"],
-        "gic": ["est_gic.py"],
+        "storm":      ["calc_storm_maxes.py"],
+        "stat":       ["stat_analysis.py"],
+        "gic":        ["est_gic.py"],
         "admittance": ["build_admittance_matrix.py"],
-        "all": ["calc_storm_maxes.py", "stat_analysis.py", "est_gic.py"],
+        "all":        ["calc_storm_maxes.py", "stat_analysis.py", "est_gic.py"],
     }
 
     for script in script_map[args.script]:

@@ -8,41 +8,45 @@ import sys
 import logging
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+
 APP_NAME = "c-swim"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
-# Data directories
 DATA_DIR = ROOT_DIR / "data"
 ECON_DATA_DIR = DATA_DIR / "econ_data"
 DEFAULT_DATA_DIR = ECON_DATA_DIR
 
-# Gannon ground GIC (minute cadence, large files ~300GB)
-GANNON_GND_GIC_DIR = DATA_DIR / "gannon_gnd_gic"
-GANNON_GND_GIC_DIR.mkdir(parents=True, exist_ok=True)
-
 FIGURES_DIR = ROOT_DIR / "figures"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
-# C-SWIM physics/engineering settings
-LEAVE_OUT_SITES = ["GUA", "HON"]
-P_TRAFO_BD = 0.01
-cut_off_volt = 160
+GANNON_GND_GIC_DIR = DATA_DIR / "gannon_gnd_gic"
+GANNON_GND_GIC_DIR.mkdir(parents=True, exist_ok=True)
 
-# C-SWIM outputs
-ALPHA_BETA_GIC_FILE = (
-    DATA_DIR / "regression" / "substations_with_gic_uncertainty_scaled.geojson"
-)
+ADMITTANCE_DIR = DATA_DIR / "admittance_matrix"
+GND_GIC_DIR = DATA_DIR / "gnd_gic"
+HORTON_GRID_DIR = DATA_DIR / "horton_grid"
 
 EFF_GIC_DIR = [
     DATA_DIR / "gic_eff",
     DATA_DIR / "final_gic" / "gic_eff",
 ]
 
-GND_GIC_DIR =  DATA_DIR / "gnd_gic"
+ALPHA_BETA_GIC_FILE = (
+    DATA_DIR / "regression" / "substations_with_gic_uncertainty_scaled.geojson"
+)
 
-ADMITTANCE_DIR = DATA_DIR / "admittance_matrix"
+LEAVE_OUT_SITES = ["GUA", "HON"]  # ALE is closed
+P_TRAFO_BD = 0.01
+cut_off_volt = 160
+USE_OLD_SUB_DATA = True  # Use OSM data as of the Gannon storm
 
-# Economic analysis settings
+IPOPT_EXEC = (
+    "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"  # Update for your system
+)
+
+PROCESS_GND_FILES = False
+
 USE_ALPHA_BETA_SCENARIO = (
     os.getenv("USE_ALPHA_BETA_SCENARIO", "false").lower() == "true"
 )
@@ -75,16 +79,16 @@ ALPHA_BETA_SCENARIOS = [
 ]
 
 REGULAR_SCENARIOS = [
+    "e_50-year-hazard A/ph",
     "e_75-year-hazard A/ph",
     "e_gannon-year-hazard A/ph",
     "e_100-year-hazard A/ph",
-    "e_50-year-hazard A/ph",
-    "e_175-year-hazard A/ph",
     "e_125-year-hazard A/ph",
-    "e_200-year-hazard A/ph",
     "e_150-year-hazard A/ph",
-    "e_250-year-hazard A/ph",
+    "e_175-year-hazard A/ph",
+    "e_200-year-hazard A/ph",
     "e_225-year-hazard A/ph",
+    "e_250-year-hazard A/ph",
 ]
 
 GDP_COLUMNS = [
@@ -122,8 +126,6 @@ DEFAULT_MAX_ITERATIONS = 20000
 DEFAULT_BATCH_SIZE = 2000
 DEFAULT_SAVE_BATCH_SIZE = 50
 
-PROCESS_GND_FILES = False
-
 OUTPUT_FILES = {
     "alpha_beta_uncertainty": "scenario_summary_alpha_beta_uncertainty.nc",
     "alpha_beta_regular": "scenario_summary_alpha_beta.nc",
@@ -141,16 +143,113 @@ OUTPUT_FILES = {
     ),
 }
 
-IPOPT_EXEC = "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"
+# Validation
+# Note: LUCY_DATA_LOC and SWERVE_DIR point to external data repositories
+# that must be configured by the user based on their local setup.
+
+LUCY_DATA_LOC = Path("/data/archives/nfs/2024-May-Storm-data")
+SWERVE_DIR = Path("/data/archives/nfs/SWERVE/")
+
+nerc_gic = LUCY_DATA_LOC / "nerc" / "gic"
+nerc_mag_folder = LUCY_DATA_LOC / "nerc" / "mag"
+tva_folder = LUCY_DATA_LOC / "tva"
+tva_gic = tva_folder / "gic"
+tva_mag = tva_folder / "mag"
+
+peak_times_path = DATA_DIR / "peak_times_1.npy"
+ground_gic_folder = DATA_DIR / "gannon_gnd_gic"
+cache_file = DATA_DIR / "gannon_gic_processed" / "partial_pveubuntu.npz"
+
+VAL_FIGURES_DIR = FIGURES_DIR
+
+DEFAULT_SITE_IDS = [
+    10052,
+    10076,
+    10099,
+    10238,
+    10255,
+    10587,
+    10618,
+    10619,
+    10622,
+    10063,
+    10077,
+    10079,
+    10107,
+    10112,
+    10113,
+    10114,
+    10115,
+    10402,
+    10428,
+    10438,
+    10659,
+    10660,
+    10693,
+    10181,
+    10182,
+    10184,
+    10185,
+    10186,
+    10187,
+    10195,
+    10197,
+    10200,
+    10201,
+    10203,
+    10204,
+    10207,
+    10208,
+    10212,
+    10220,
+    10249,
+    10250,
+    50100,
+    50127,
+    50112,
+    50131,
+    50132,
+    50103,
+    50104,
+    50109,
+    50115,
+    50116,
+    50117,
+    50118,
+    50119,
+    50120,
+    50122,
+]
+
+TVA_NAME_MAP = {
+    "anderson": None,
+    "montgomery": "Montgomery",
+    "widowscreek2": "Widows Creek 2",
+    "gleason": "Gleason",
+    "raccoonmountain": "Raccoon Mountain",
+    "johnsonville": "Johnsonville",
+    "pinhook": "Pinhook",
+    "paradise3": "Paradise",
+    "southaven": "Southaven",
+    "shelby": "Shelby",
+    "eastpoint": "East Point",
+    "bullrun": "Bull Run",
+    "sullivan": "Sullivan",
+    "weakley": "Weakley",
+    "union": "Union",
+    "rutherford": "Rutherford",
+    "bradley": "Bradley",
+}
+
+DEFAULT_START_TIME = "2024-05-10T12:00:00"
+DEFAULT_END_TIME = "2024-05-12T12:00:00"
 
 
 def get_scenarios():
-    """Get appropriate scenario list based on configuration."""
     return ALPHA_BETA_SCENARIOS if USE_ALPHA_BETA_SCENARIO else REGULAR_SCENARIOS
 
 
 def get_simulation_config():
-    """Get simulation parameters as dictionary."""
     return {
         "theta0": DEFAULT_THETA0,
         "tolerance": DEFAULT_TOLERANCE,
@@ -161,43 +260,40 @@ def get_simulation_config():
 
 
 def get_data_dir(subdir=None, econ=False):
-    """Get data directory path, creating if needed."""
     base = ECON_DATA_DIR if econ else DATA_DIR
-
-    if subdir:
-        data_dir = base / subdir
-    else:
-        data_dir = base
-
+    data_dir = base / subdir if subdir else base
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
 
 def setup_logger(name=APP_NAME, log_file=None, level=logging.INFO):
-    """Setup logger with console and optional file output."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
-
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
-
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-
     if log_file:
         log_path = Path(log_file)
-        if not log_path.parent.exists():
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-
     return logger
+
+def setup_matplotlib():
+    """Configure global matplotlib defaults for all plots."""
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman"],
+        "mathtext.fontset": "custom",
+        "mathtext.rm": "Times New Roman",
+        "mathtext.it": "Times New Roman:italic",
+        "mathtext.bf": "Times New Roman:bold",
+    })

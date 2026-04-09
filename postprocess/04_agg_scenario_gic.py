@@ -1,3 +1,10 @@
+"""
+Aggregate ground GIC results from Monte Carlo CSV outputs into a single NetCDF.
+Reads per-iteration ground GIC CSVs, builds a 3D (files x substations x scenarios)
+cube, computes summary statistics, and saves as a compressed xarray NetCDF.
+Authors: Dennies Bor, Ed Oughton
+"""
+
 import os
 from pathlib import Path
 import numpy as np
@@ -44,6 +51,7 @@ for f_idx, df in enumerate(dfs):
 
 
 def q(a, qval):
+    """Return nanpercentile along file axis."""
     return np.nanpercentile(a, qval, axis=0)
 
 

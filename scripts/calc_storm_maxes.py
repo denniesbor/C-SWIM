@@ -29,8 +29,9 @@ logger = setup_logger(log_file="logs/storm_maxes.log")
 
 
 def read_usgs_accepted_sites():
-    file_path = DATA_LOC / "EMTF" / "USMTArray_unique_grid_points_1616_sites.txt"
     """Read USGS accepted sites from a text file."""
+    
+    file_path = DATA_LOC / "EMTF" / "USMTArray_unique_grid_points_1616_sites.txt"
     try:
         df = pd.read_csv(
             file_path, header=None, names=["Station", "Latitude", "Longitude"]
@@ -45,7 +46,7 @@ def read_usgs_accepted_sites():
 usgs_accepted_sites = read_usgs_accepted_sites()
 usgs_accepted_set = set(usgs_accepted_sites["Station"].str.upper().tolist())
 LOAD_NEW = (
-    True  # toggle to force reloading and processing emtf and transmission lines data
+    False  # toggle to force reloading and processing emtf and transmission lines data
 )
 
 
@@ -442,15 +443,56 @@ def build_common_stack_from_obsdict(obs_dict, t0, t1):
 
 
 def calculate_maxes(
-    start_time, end_time, calcV=False, is_special=True, use_peaks=False, top_k=3
+    start_time,
+    end_time,
+    calcV=False,
+    is_special=True,
+    use_peaks=False,
+    top_k=3,
+    pad_hours=6,
 ):
     """Calculate maximum values of magnetic and electric fields."""
 
     t0 = time.time()
 
-    B_obs, obs_xy, times, kept_names = build_common_stack_from_obsdict(
-        obs_dict, start_time, end_time
-    )
+    # Pad start/end time to avoid FFT edge effects
+    pad_td = pd.Timedelta(hours=pad_hours)
+    padded_start = start_time - pad_td
+    padded_end = end_time + pad_td
+
+    # Try to build B_obs on padded window first
+    try:
+        B_obs, obs_xy, times, kept_names = build_common_stack_from_obsdict(
+            obs_dict, padded_start, padded_end
+        )
+        # Check if we actually got the padded data (not NaNs at edges)
+        pad_samples = pad_hours * 60
+        if B_obs.shape[0] < pad_samples * 2 + 10:
+            logger.warning(
+                f"Padded window too short ({B_obs.shape[0]} samples), falling back to original window"
+            )
+            raise ValueError("Insufficient padded data")
+
+        # Check edges for NaNs
+        edge_start = B_obs[:pad_samples]
+        edge_end = B_obs[-pad_samples:]
+        if np.isnan(edge_start).any() or np.isnan(edge_end).any():
+            logger.warning("NaNs in padded edges, falling back to original window")
+            raise ValueError("NaNs in padded edges")
+
+        using_padding = True
+        logger.info(f"Using {pad_hours}hr padding: {padded_start} to {padded_end}")
+
+    except (RuntimeError, ValueError) as e:
+        logger.warning(
+            f"Could not use padded window ({e}), using original: {start_time} to {end_time}"
+        )
+        B_obs, obs_xy, times, kept_names = build_common_stack_from_obsdict(
+            obs_dict, start_time, end_time
+        )
+        using_padding = False
+        pad_samples = 0
+
     site_xys = np.array([(s.latitude, s.longitude) for s in MT_sites], dtype=float)
 
     B_pred = calculate_SECS(B_obs, obs_xy, site_xys)
@@ -472,24 +514,33 @@ def calculate_maxes(
                 f"[SECS] {MT_sites[i].name} (idx {i}, lat={lat:.3f}, lon={lon:.3f}) -> {'; '.join(reason)}"
             )
 
-    site_maxB = np.max(np.sqrt(B_pred[:, :, 0] ** 2 + B_pred[:, :, 1] ** 2), axis=0)
-
-    # E_pred (trim only for FFT edge effects)
+    # Calculate E_pred on full (possibly padded) window
     T = B_pred.shape[0]
-    min_per_day = 1440
-    trim = int(round(1.2 * min_per_day))
-    if 2 * trim >= T:
-        trim = max(0, (T - 1) // 2)
-
-    Te = T - 2 * trim
-    E_pred = np.zeros((Te, len(site_xys), 2), dtype=float)
+    E_pred_full = np.zeros((T, len(site_xys), 2), dtype=float)
     for i, site in enumerate(MT_sites):
         Ex, Ey = site.convolve_fft(B_pred[:, i, 0], B_pred[:, i, 1], dt=60)
-        E_pred[:, i, 0] = Ex[trim : T - trim]
-        E_pred[:, i, 1] = Ey[trim : T - trim]
+        E_pred_full[:, i, 0] = Ex
+        E_pred_full[:, i, 1] = Ey
+
+    # Trim back to original window (remove padding)
+    if using_padding:
+        trim_start = pad_samples
+        trim_end = T - pad_samples
+        E_pred = E_pred_full[trim_start:trim_end]
+        B_pred = B_pred[trim_start:trim_end]
+        logger.info(
+            f"Trimmed from {T} to {E_pred.shape[0]} samples (removed {pad_hours}hr padding)"
+        )
+    else:
+        E_pred = E_pred_full
+        # No trim needed
 
     np.nan_to_num(E_pred, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    if E_pred.shape[0] == 0:
+
+    Te = E_pred.shape[0]
+    site_maxB = np.max(np.sqrt(B_pred[:, :, 0] ** 2 + B_pred[:, :, 1] ** 2), axis=0)
+
+    if Te == 0:
         logger.warning(
             "Empty E_pred after trim; setting site_maxE=0 and skipping peaks."
         )
@@ -507,8 +558,8 @@ def calculate_maxes(
             peak_time = int(peak_idxs[0])
             site_maxE = np.sqrt(np.sum(E_pred[peak_time] ** 2, axis=1))
         else:
-            mag = np.sqrt(np.sum(E_pred**2, axis=2))  # [Te, S]
-            site_maxE = mag.max(axis=0)  # zeros already for NaNs/Infs
+            mag = np.sqrt(np.sum(E_pred**2, axis=2))
+            site_maxE = mag.max(axis=0)
 
     logger.info(f"Done calculating electric fields: {time.time() - t0}")
 
@@ -524,7 +575,6 @@ def calculate_maxes(
             )
             logger.info(f"Done calculating voltages: {time.time() - t0}")
 
-            # return full series only for Gannon
             if is_special:
                 return (site_maxB, site_maxE, arr_delaunay, B_pred, E_pred)
         else:
@@ -702,14 +752,10 @@ def main():
                     storm_start = storm_df.loc[i, "Start"]
                     storm_end = storm_df.loc[i, "End"]
 
-                    time_b = pd.date_range(
-                        start=storm_start, periods=B_pred.shape[0], freq="60s"
+                    time_e = pd.date_range(
+                        start=storm_start, periods=E_pred.shape[0], freq="60s"
                     )
-                    T, Te = B_pred.shape[0], E_pred.shape[0]
-                    trim = (T - Te) // 2
-
-                    time_e = time_b[trim : trim + Te]
-                    B_pred_xy = B_pred[trim : trim + Te, :, :2]
+                    B_pred_xy = B_pred[:, :, :2]
 
                     ds_special = xr.Dataset(
                         data_vars=dict(

@@ -39,8 +39,10 @@ land_mask_dir = DATA_LOC / "land_mask"
 
 USE_COARSE = True
 COARSE_SINGLE = land_mask_dir / "coarse" / "nlcd_coarse_mask.tif"
-COARSE_TILES = land_mask_dir / "tiles"
+COARSE_TILES = land_mask_dir / "tiles_coarse"
 COARSE_IS_BINARY = True
+
+NLCD_CAT = land_mask_dir / "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 
 out_dir = land_mask_dir / "coarse_interpolation_tiles"
 tile_rows, tile_cols = 8, 8
@@ -120,6 +122,24 @@ def _mask_from_coarse_single(coarse_path, bbox):
     return mask, trs, crs
 
 
+def _land_mask_from_nlcd_window(bbox):
+    with _rio_gate:
+        with rasterio.open(NLCD_CAT) as src:
+            arr = src.read(1, window=bbox["window"])
+            trs = bbox["transform"]
+            crs = src.crs
+            nodata = src.nodata if src.nodata is not None else 0
+
+    if arr.size == 0:
+        return None, None, None
+
+    mask = ((arr != nodata) & (~np.isin(arr, [11, 12]))).astype("uint8")
+    if mask.sum() == 0:
+        return None, None, None
+
+    return mask, trs, crs
+
+
 def interpolate_chunk(bbox, idx, grid_raster_path):
     try:
         if USE_COARSE:
@@ -131,33 +151,78 @@ def interpolate_chunk(bbox, idx, grid_raster_path):
                     crs = src.crs
                     arr = src.read(1)
                 if arr.size == 0 or np.all(arr == 0):
-                    logger.debug(f"Chunk {idx} coarse tile has no valid pixels")
-                    return None
+                    land_mask, trs2, crs2 = _land_mask_from_nlcd_window(bbox)
+                    if land_mask is None or land_mask.sum() == 0:
+                        return None
+                    os.makedirs(out_dir, exist_ok=True)
+                    mask_fp = out_dir / f"land_mask_tile_{idx}.tif"
+                    if not mask_fp.exists():
+                        with rasterio.open(
+                            mask_fp,
+                            "w",
+                            driver="GTiff",
+                            height=land_mask.shape[0],
+                            width=land_mask.shape[1],
+                            count=1,
+                            dtype="uint8",
+                            crs=crs2,
+                            transform=trs2,
+                            nodata=0,
+                            tiled=True,
+                            compress="LZW",
+                        ) as dst:
+                            dst.write(land_mask, 1)
+                    vsipath = str(mask_fp)
+                    trs, crs = trs2, crs2
+                    del land_mask
             else:
                 mask, trs, crs = _mask_from_coarse_single(grid_raster_path, bbox)
                 if mask is None or mask.sum() == 0:
-                    logger.debug(f"Chunk {idx} has no valid pixels (coarse single)")
-                    return None
-                os.makedirs(out_dir, exist_ok=True)
-                mask_fp = out_dir / f"mask_tile_{idx}.tif"
-                if not mask_fp.exists():
-                    with rasterio.open(
-                        mask_fp,
-                        "w",
-                        driver="GTiff",
-                        height=mask.shape[0],
-                        width=mask.shape[1],
-                        count=1,
-                        dtype="uint8",
-                        crs=crs,
-                        transform=trs,
-                        nodata=0,
-                        tiled=True,
-                        compress="LZW",
-                    ) as dst:
-                        dst.write(mask, 1)
-                vsipath = str(mask_fp)
-                del mask
+                    land_mask, trs2, crs2 = _land_mask_from_nlcd_window(bbox)
+                    if land_mask is None or land_mask.sum() == 0:
+                        return None
+                    os.makedirs(out_dir, exist_ok=True)
+                    mask_fp = out_dir / f"land_mask_tile_{idx}.tif"
+                    if not mask_fp.exists():
+                        with rasterio.open(
+                            mask_fp,
+                            "w",
+                            driver="GTiff",
+                            height=land_mask.shape[0],
+                            width=land_mask.shape[1],
+                            count=1,
+                            dtype="uint8",
+                            crs=crs2,
+                            transform=trs2,
+                            nodata=0,
+                            tiled=True,
+                            compress="LZW",
+                        ) as dst:
+                            dst.write(land_mask, 1)
+                    vsipath = str(mask_fp)
+                    trs, crs = trs2, crs2
+                    del land_mask
+                else:
+                    os.makedirs(out_dir, exist_ok=True)
+                    mask_fp = out_dir / f"mask_tile_{idx}.tif"
+                    if not mask_fp.exists():
+                        with rasterio.open(
+                            mask_fp,
+                            "w",
+                            driver="GTiff",
+                            height=mask.shape[0],
+                            width=mask.shape[1],
+                            count=1,
+                            dtype="uint8",
+                            crs=crs,
+                            transform=trs,
+                            nodata=0,
+                            tiled=True,
+                            compress="LZW",
+                        ) as dst:
+                            dst.write(mask, 1)
+                    vsipath = str(mask_fp)
+                    del mask
         else:
             with _rio_gate:
                 with rasterio.open(grid_raster_path) as src:
@@ -346,7 +411,7 @@ def load_processed_data():
     return zcta_aea, voronoi_aea, economic_cols, str(grid_raster_path)
 
 
-def main(start_tile=0, end_tile=None, overwrite=False):
+def main(start_tile=1, end_tile=None, overwrite=False):
     logger.info(f"Starting raster interpolation from tile {start_tile}")
 
     global zcta_aea, voronoi_aea, economic_cols

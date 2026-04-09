@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cswim"
+version = "0.1.0"
+description = "C-SWIM: Power grid GIC impact assessment pipeline"
+authors = [{name = "Dennies Bor"}, {name = "Ed Oughton"}]
+requires-python = ">=3.10"
+
+[project.scripts]
+run-val         = "run_val:main"
+run-econ        = "run_econ:main"
+run-preprocess  = "run_preprocess:main"
+run-postprocess = "run_postprocess:main"
+run-viz         = "run_viz:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "configs*",
+    "validation*",
+    "econ*",
+    "preprocess*",
+    "postprocess*",
+    "scripts*",
+    "viz*",
+]
