@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from rep_mapping.rep_config import UIUC_DIR, TVA_DIR, FIGURES_DIR, setup_logger, setup_matplotlib
+from rep_mapping.rep_config import (
+    UIUC_DIR,
+    TVA_DIR,
+    FIGURES_DIR,
+    setup_logger,
+    setup_matplotlib,
+)
 
 logger = setup_logger(log_file="logs/plot_modelled_vs_modelled.log")
 

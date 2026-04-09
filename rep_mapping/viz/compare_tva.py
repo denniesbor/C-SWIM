@@ -10,7 +10,13 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from tqdm import tqdm
 
-from rep_mapping.rep_config import TVA_DIR, DEVICES_NC, FIGURES_DIR, setup_logger, setup_matplotlib
+from rep_mapping.rep_config import (
+    TVA_DIR,
+    DEVICES_NC,
+    FIGURES_DIR,
+    setup_logger,
+    setup_matplotlib,
+)
 
 logger = setup_logger(log_file="logs/plot_tva_gic.log")
 

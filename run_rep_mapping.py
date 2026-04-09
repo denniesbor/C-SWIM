@@ -16,7 +16,12 @@ from pathlib import Path
 
 from configs import setup_logger
 from rep_mapping.rep_config import (
-    TVA_DIR, UIUC_DIR, DEVICES_NC, GANNON_DS, HIFLD_PATH, OSM_SUB_PATH
+    TVA_DIR,
+    UIUC_DIR,
+    DEVICES_NC,
+    GANNON_DS,
+    HIFLD_PATH,
+    OSM_SUB_PATH,
 )
 
 logger = setup_logger("rep_mapping")
@@ -29,8 +34,7 @@ def check_essentials():
             missing.append(f)
     if missing:
         raise FileNotFoundError(
-            "Missing NFS dependencies:\n" +
-            "\n".join([f"  {f}" for f in missing])
+            "Missing NFS dependencies:\n" + "\n".join([f"  {f}" for f in missing])
         )
 
 
@@ -46,8 +50,8 @@ def check_grids():
             missing.append(f)
     if missing:
         raise FileNotFoundError(
-            "Grid files missing. Run preprocess first:\n" +
-            "\n".join([f"  {f}" for f in missing])
+            "Grid files missing. Run preprocess first:\n"
+            + "\n".join([f"  {f}" for f in missing])
         )
 
 
@@ -61,8 +65,8 @@ def check_voltages():
             missing.append(f)
     if missing:
         raise FileNotFoundError(
-            "Voltage files missing. Run preprocess first:\n" +
-            "\n".join([f"  {f}" for f in missing])
+            "Voltage files missing. Run preprocess first:\n"
+            + "\n".join([f"  {f}" for f in missing])
         )
 
 
@@ -113,11 +117,12 @@ def run_viz():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Reproducible mapping GIC validation pipeline")
+        description="Reproducible mapping GIC validation pipeline"
+    )
     parser.add_argument(
         "step",
         choices=["preprocess", "validate", "viz", "all"],
-        help="Pipeline step to run"
+        help="Pipeline step to run",
     )
     args = parser.parse_args()
 

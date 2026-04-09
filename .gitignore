@@ -73,4 +73,26 @@ figures/
 
 # CSV outputs
 *.csv
-viz/debug.py
+viz/debug.py**/__pycache__/
+*.pwb
+*.pwd
+*.aux
+*.RAW
+
+
+#Rep mapping
+data/rep_data/tva/arr_v_tva.npy
+data/rep_data/tva/bus_ids_map.pkl
+data/rep_data/tva/df_lines.parquet
+data/rep_data/tva/sub_look_up.pkl
+data/rep_data/tva/substation_buses.pkl
+data/rep_data/uiuc150/arr_v_uiuc.npy
+data/rep_data/uiuc150/bus_coords.pkl
+data/rep_data/uiuc150/df_lines.pkl
+data/rep_data/uiuc150/df_lines_with_voltages.pkl
+data/rep_data/uiuc150/df_transformers.pkl
+data/rep_data/uiuc150/ground_gic.parquet
+data/rep_data/uiuc150/n_nodes.npy
+data/rep_data/uiuc150/sub_look_up.pkl
+data/rep_data/uiuc150/sub_ref.pkl
+data/rep_data/uiuc150/substations_df.pkl
