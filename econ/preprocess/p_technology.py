@@ -1,93 +1,72 @@
 """
 Production Technology Matrix Generator for Economic Analysis
-Authors: Dennies and Ed
+Authors: Dennies Bor & Edward Oughton
 
-This module processes input-output data from Bureau of Economic Analysis (BEA)
-tables to create production technology matrices for economic analysis and
-computable general equilibrium (CGE) modeling.
+Aggregates the BEA sector-level Use table into the 10-sector scheme used
+across c-swim, then derives the direct requirements matrix (A), gross
+output vector (X), value added components, and final demand components.
+
+The Use table is fetched from the BEA InputOutput API (TableID 258) by
+fetch_bea_use_table; this module just consumes the resulting CSV and
+produces the 10-sector matrices that downstream models read.
 """
 
 import pandas as pd
+
 from configs import setup_logger, get_data_dir
+from econ.preprocess.fetch_bea_census import fetch_bea_use_table, DEFAULT_YEAR
 
 logger = setup_logger("Production Technology Builder")
 DATA_LOC = get_data_dir(econ=True)
 TABLES_DIR = DATA_LOC / "supply_use_tables"
-G_OUTPUT_DIR = DATA_LOC / "gross_output"
+
+# Sector aggregation: maps c-swim 10-sector labels to the BEA sector codes
+# that appear as both row and column codes in the Use table.
+SECTOR_GROUPS = {
+    "AGR": ["11"],
+    "MINING": ["21"],
+    "UTIL_CONST": ["22", "23"],
+    "MANUF": ["31G"],
+    "TRADE_TRANSP": ["42", "44RT", "48TW"],
+    "INFO": ["51"],
+    "FIRE": ["FIRE"],
+    "PROF_OTHER": ["PROF", "81"],
+    "EDUC_ENT": ["6", "7"],
+    "G": ["G"],
+}
 
 
-def preprocess_use_table(file_path: str) -> pd.DataFrame:
+def preprocess_use_table(file_path):
+    """Load the Use table CSV produced by fetch_bea_use_table and convert
+    values from $ millions to $ billions to match the rest of the pipeline.
     """
-    Load and clean the BEA Use Table, converting values to billions of dollars.
-    """
-    data = pd.read_csv(file_path)
-
-    # Clean header names
-    data.columns = [
-        col if not col.startswith("Unnamed:") else "code" for col in data.columns
-    ]
-
-    if "code" in data.columns and "Commodities/Industries" in data.columns:
-        data = data.set_index(["code", "Commodities/Industries"])
-
-    # Handle BEA specific null markers and formatting
-    data = data.map(lambda x: str(x).strip().replace("---", "0"))
+    data = pd.read_csv(file_path, index_col=0)
     data = data.apply(pd.to_numeric, errors="coerce").fillna(0)
 
-    # Scale to billions
-    data = data / 1000
-
-    return data
+    return data  # Left in millions for now
 
 
-def clean_gross_output_file(input_path, output_path):
+def create_production_technology(use_table_path, output_dir=None):
+    """Build the 10-sector A matrix, gross output vector, value added, and
+    final demand components from the Use table.
     """
-    Remove HTML entities from gross output data file and create a clean version.
-    """
-    with open(input_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    if output_dir is None:
+        output_dir = DATA_LOC / "10sector"
 
-    # Fix specific encoding artifact
-    content = content.replace("+ACI-", '"')
+    U = preprocess_use_table(use_table_path)
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    return output_path
-
-
-def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector"):
-    """
-    Create production technology matrices from BEA input-output data
-    aggregated into 10 major sectors.
-    """
-    # Sector aggregation mapping
-    groups = {
-        "AGR": ["11"],
-        "MINING": ["21"],
-        "UTIL_CONST": ["22", "23"],
-        "MANUF": ["31G"],
-        "TRADE_TRANSP": ["42", "44RT", "48TW"],
-        "INFO": ["51"],
-        "FIRE": ["FIRE"],
-        "PROF_OTHER": ["PROF", "81"],
-        "EDUC_ENT": ["6", "7"],
-        "G": ["G"],
-    }
-
-    # Load and clean raw table
-    U = preprocess_use_table(use_table_path)[1:]
-    U = U.droplevel(1)
-
-    # Separate intermediate inputs and total output
+    # Intermediate transactions: rows whose code matches a BEA industry
+    # (numeric, FIRE, PROF, 44RT, 48TW, G). Auxiliary rows like Used, Other,
+    # T-totals, and value-added rows are excluded by this filter.
     intermediate = U.loc[
         U.index.str.match(r"^\d{1,2}G?$|^FIRE$|^PROF$|^44RT$|^48TW$|^G$")
     ]
     output_row = U.loc["T018"]
 
-    # Create mapping series for aggregation
+    # Build a 2-digit code -> 10-sector lookup once and reuse for both
+    # row and column aggregation.
     long = (
-        pd.Series(groups)
+        pd.Series(SECTOR_GROUPS)
         .explode()
         .rename_axis("group")
         .reset_index()
@@ -95,76 +74,67 @@ def create_production_technology(use_table_path, output_dir=DATA_LOC / "10sector
     )
     code2grp = long.set_index("code")["group"]
 
-    # Aggregate rows (Inputs)
+    # Aggregate intermediate transactions on rows (commodities), then on
+    # columns (industries). Result is a 10x10 transaction matrix.
     U_big_temp = intermediate.rename(index=code2grp).groupby(level=0).sum()
-
-    # Aggregate columns (Outputs) to form the Transaction Matrix
     U_big = (
         U_big_temp.T.rename(index=code2grp)
         .groupby(level=0)
         .sum()
-        .T.reindex(index=groups.keys(), columns=groups.keys())
+        .T.reindex(index=SECTOR_GROUPS.keys(), columns=SECTOR_GROUPS.keys())
     )
 
-    # Aggregate Gross Output Vector
+    # Aggregate the gross output row from T018.
     X_big = (
-        output_row.rename(index=code2grp).groupby(level=0).sum().reindex(groups.keys())
+        output_row.rename(index=code2grp)
+        .groupby(level=0)
+        .sum()
+        .reindex(SECTOR_GROUPS.keys())
     )
 
-    # Calculate A Matrix (Direct Requirements): A = U / X
+    # Direct requirements matrix: A = U / X (column-wise).
     A_big = U_big.div(X_big, axis=1).round(6)
 
-    # Process Value Added
+    # Value added components: compensation, taxes, gross operating surplus.
     va_rows = ["V001", "V003", "T00OTOP", "T00OSUB"]
     VA_big = (
         U.loc[va_rows, intermediate.columns]
         .rename(columns=code2grp)
         .T.groupby(level=0)
         .sum()
-        .T.reindex(columns=groups.keys())
+        .T.reindex(columns=SECTOR_GROUPS.keys())
     )
 
-    # Process Final Demand
+    # Final demand components: PCE, government, investment, inventory, exports.
     fd_cols = ["F010", "F100", "F020", "F030", "F040"]
     FD_big = (
         U.loc[intermediate.index, fd_cols]
         .rename(index=code2grp)
         .groupby(level=0)
         .sum()
-        .reindex(index=groups.keys())
+        .reindex(index=SECTOR_GROUPS.keys())
     )
 
-    # Export results
     output_dir.mkdir(parents=True, exist_ok=True)
-
     A_big.to_csv(output_dir / "direct_requirements.csv")
-    X_big.to_csv(output_dir / "gross_output.csv", header=["2023"])
+    X_big.to_csv(output_dir / "gross_output.csv", header=[str(DEFAULT_YEAR)])
     VA_big.to_csv(output_dir / "value_added.csv")
     FD_big.to_csv(output_dir / "final_demand.csv")
-
-    # Save summary vectors
-    VA_big.sum(axis=0).to_csv(output_dir / "total_value_added.csv", header=["2023"])
-    U_big.sum(axis=0).to_csv(output_dir / "total_intermediate_use.csv", header=["2023"])
+    VA_big.sum(axis=0).to_csv(
+        output_dir / "total_value_added.csv", header=[str(DEFAULT_YEAR)]
+    )
+    U_big.sum(axis=0).to_csv(
+        output_dir / "total_intermediate_use.csv", header=[str(DEFAULT_YEAR)]
+    )
 
     logger.info(f"10-sector matrices saved to {output_dir}")
-    logger.info(f"Direct requirements matrix: {output_dir/'direct_requirements.csv'}")
-    logger.info(f"Gross output vector: {output_dir/'gross_output.csv'}")
-    logger.info(f"Value added components: {output_dir/'value_added.csv'}")
-    logger.info(f"Final demand components: {output_dir/'final_demand.csv'}")
-
     return A_big, X_big, VA_big, FD_big
 
 
 if __name__ == "__main__":
-    # Pre-clean the raw gross output file
-    clean_gross_output_file(
-        G_OUTPUT_DIR / "gross_output.csv", G_OUTPUT_DIR / "cleaned_gross_output.csv"
-    )
+    use_table_fp = fetch_bea_use_table(year=DEFAULT_YEAR)
 
-    # Generate matrices
-    A_big, X_big, VA_big, FD_big = create_production_technology(
-        TABLES_DIR / "use_tables.csv"
-    )
+    A_big, X_big, VA_big, FD_big = create_production_technology(use_table_fp)
 
     logger.info(f"Number of sectors: {len(A_big)}")
-    logger.info(f"GDP (total value added): {VA_big.sum().sum():.1f} billion dollars")
+    logger.info(f"GDP (total value added): {VA_big.sum().sum():.1f} million dollars")

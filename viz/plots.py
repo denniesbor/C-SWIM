@@ -35,6 +35,10 @@ from viz.plot_utils import (
     generate_grid_and_mask,
     extract_line_coordinates,
     add_ferc_regions,
+    load_all_econ_results,
+    export_econ_comparison_table,
+    ECON_MODELS,
+    ECON_PALETTES,
 )
 from econ.scripts.l_prepr_data import (
     read_pickle,
@@ -424,27 +428,33 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
     plt.show()
 
 
-def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
-    """Plot economic impacts by NAICS sector."""
+def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
+    """Plot economic impacts by NAICS sector as stacked bars (direct + indirect).
+
+    Colors vary by model type so the three specifications are visually
+    distinguishable in the paper appendix while keeping an identical layout.
+    """
     SCALE = 1_000
     LABEL = "Impact (Bn $/day)"
 
+    palette = ECON_PALETTES.get(model_type, ECON_PALETTES["ghosh"])
+    color_direct = palette["direct"]
+    color_indirect = palette["indirect"]
+
     if USE_ALPHA_BETA_SCENARIO:
         scenarios = ["gic_100yr", "gic_150yr", "gic_200yr", "gic_250yr"]
-        scenario_250_mean = econ_results[
-            (econ_results.scenario == "gic_250yr") & (econ_results.confidence == "mean")
-        ].set_index("sector")
+        scen_250 = "gic_250yr"
     else:
         scenarios = ["100-year", "150-year", "200-year", "250-year"]
-        scenario_250_mean = econ_results[
-            (econ_results.scenario == "250-year") & (econ_results.confidence == "mean")
-        ].set_index("sector")
+        scen_250 = "250-year"
+
+    scenario_250_mean = econ_results[
+        (econ_results.scenario == scen_250) & (econ_results.confidence == "mean")
+    ].set_index("sector")
 
     sector_order = (
         scenario_250_mean.total_impact.abs().sort_values(ascending=False).index
     )
-
-    logger.info(f"Sector order: {sector_order}")
 
     sector_labels_full = {
         "AGR": "Agriculture &\nForestry",
@@ -458,10 +468,7 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
         "EDUC_ENT": "Education &\nEntertainment",
         "G": "Government",
     }
-
     short_labels = [sector_labels_full[s] for s in sector_order]
-
-    scen_250 = "gic_250yr" if USE_ALPHA_BETA_SCENARIO else "250-year"
 
     scenario_250_p5 = econ_results[
         (econ_results.scenario == scen_250) & (econ_results.confidence == "p5")
@@ -470,18 +477,13 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
         (econ_results.scenario == scen_250) & (econ_results.confidence == "p95")
     ].set_index("sector")
 
-    logger.info(
-        f"Max total impact for 250-year scenario: {scenario_250_p95.total_impact.abs().max()/SCALE:.2f} Bn $/day"
-    )
-
     max_x = scenario_250_p95.total_impact.abs().max() / SCALE * 1.1
     baseline_gap = 0.02 * max_x
 
     fig, axes = plt.subplots(2, 2, figsize=(8, 8), sharex=True)
 
     for i, scen in enumerate(scenarios):
-        row = i // 2
-        col = i % 2
+        row, col = i // 2, i % 2
         ax = axes[row, col]
 
         df = econ_results[econ_results.scenario == scen]
@@ -491,13 +493,6 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
 
         direct = mean.direct_shock.abs() / SCALE
         multiplier = mean.multiplier_effect.abs() / SCALE
-        mean_tot = mean.total_impact.abs() / SCALE
-
-        p5_abs = p5.total_impact.abs() / SCALE
-        p95_abs = p95.total_impact.abs() / SCALE
-
-        lower_err = np.abs(mean_tot - np.minimum(p5_abs, p95_abs))
-        upper_err = np.abs(np.maximum(p5_abs, p95_abs) - mean_tot)
 
         y = np.arange(len(sector_order))[::-1]
 
@@ -505,7 +500,7 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
             y,
             direct,
             left=baseline_gap,
-            color="darkred",
+            color=color_direct,
             alpha=0.8,
             height=0.8,
             zorder=3,
@@ -514,7 +509,7 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
             y,
             multiplier,
             left=direct + baseline_gap,
-            color="lightcoral",
+            color=color_indirect,
             alpha=0.8,
             height=0.8,
             zorder=3,
@@ -539,7 +534,7 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
         indirect_high = p95.multiplier_effect.abs().sum() / SCALE
         indirect_err = (indirect_high - indirect_low) / 2
 
-        total_mean = mean_tot.sum()
+        total_mean = mean.total_impact.abs().sum() / SCALE
         total_low = p5.total_impact.abs().sum() / SCALE
         total_high = p95.total_impact.abs().sum() / SCALE
         total_err = (total_high - total_low) / 2
@@ -588,7 +583,7 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
                 (sx, sy - 4.7 * dy),
                 0.04,
                 0.03,
-                facecolor="darkred",
+                facecolor=color_direct,
                 alpha=0.8,
                 transform=ax.transAxes,
             )
@@ -602,12 +597,13 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
             va="center",
             fontsize=10,
         )
+
         ax.add_patch(
             Rectangle(
                 (sx, sy - 5.7 * dy),
                 0.04,
                 0.03,
-                facecolor="lightcoral",
+                facecolor=color_indirect,
                 alpha=0.8,
                 transform=ax.transAxes,
             )
@@ -623,24 +619,21 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
         )
 
         ax.set_yticks(y)
-
         if col == 0:
             ax.set_yticklabels(short_labels, fontsize=10)
         else:
             ax.set_yticklabels([])
-
         if row == 1:
             ax.set_xlabel(LABEL, fontsize=11)
         else:
             ax.tick_params(labelbottom=False)
-
         ax.tick_params(labelsize=8)
         ax.set_facecolor("#F0F0F0")
 
     fig.patch.set_facecolor("#F0F0F0")
-
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.05, wspace=0.05)
+
     fig.savefig(
         FIGURES_DIR / f"indirect_impact_{model_type}_{file_suffix}.pdf",
         dpi=300,
@@ -654,14 +647,33 @@ def plot_econo_naics(econ_results, model_type="io", file_suffix=""):
     plt.show()
 
 
-def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
-    """Plot economic impacts by NAICS sector with dodged bars for direct and indirect impacts."""
+def plot_econo_naics_dodged(
+    econ_results,
+    model_type="ghosh",
+    file_suffix="",
+    confidence_df=None,
+    us_pop_total=328_948_581,
+):
+    """Plot economic impacts by NAICS sector with dodged bars for direct and
+    indirect impacts.  Colors vary by model type; when confidence_df is
+    provided the per-scenario affected population is added to the annotation.
+    """
     SCALE = 1_000
     LABEL = "Impact (Bn $/day)"
-    scenarios = ["100-year", "150-year", "200-year", "250-year"]
+
+    palette = ECON_PALETTES.get(model_type, ECON_PALETTES["ghosh"])
+    color_direct = palette["direct"]
+    color_indirect = palette["indirect"]
+
+    if USE_ALPHA_BETA_SCENARIO:
+        scenarios = ["gic_100yr", "gic_150yr", "gic_200yr", "gic_250yr"]
+        scen_250 = "gic_250yr"
+    else:
+        scenarios = ["100-year", "150-year", "200-year", "250-year"]
+        scen_250 = "250-year"
 
     scenario_250_mean = econ_results[
-        (econ_results.scenario == "250-year") & (econ_results.confidence == "mean")
+        (econ_results.scenario == scen_250) & (econ_results.confidence == "mean")
     ].set_index("sector")
     sector_order = (
         scenario_250_mean.total_impact.abs().sort_values(ascending=False).index
@@ -679,11 +691,10 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
         "EDUC_ENT": "Education &\nEntertainment",
         "G": "Government",
     }
-
     short_labels = [sector_labels_full[s] for s in sector_order]
 
     scenario_250_p95 = econ_results[
-        (econ_results.scenario == "250-year") & (econ_results.confidence == "p95")
+        (econ_results.scenario == scen_250) & (econ_results.confidence == "p95")
     ].set_index("sector")
     max_x = scenario_250_p95.total_impact.abs().max() / SCALE * 1.1
     baseline_gap = 0.02 * max_x
@@ -691,6 +702,30 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
     max_direct = np.max(scenario_250_p95.direct_shock.abs().max() / SCALE * 1.1)
     max_indirect = max_x - max_direct
     x_lim = np.max([max_direct, max_indirect])
+
+    # Helper: pull (mean, p5, p95) affected population for a scenario.
+    def _pop_affected(scen_name):
+        if confidence_df is None:
+            return None
+        # Scenario names in confidence_df carry the 'e_..-hazard A/ph' wrapper
+        # while econ_results already has it stripped. Try both.
+        candidates = [
+            scen_name,
+            f"e_{scen_name}-hazard A/ph",
+            f"gic_{scen_name.replace('-year', 'yr')}",
+        ]
+        rows = confidence_df[
+            (confidence_df["scenario"].isin(candidates))
+            & (confidence_df["variable"] == "POP_AFFECTED")
+        ]
+        if rows.empty:
+            return None
+        r = rows.iloc[0]
+        return {
+            "mean": float(r["mean"]),
+            "p5": float(r["p5"]),
+            "p95": float(r["p95"]),
+        }
 
     fig, axes = plt.subplots(2, 2, figsize=(8, 8), sharex=True)
 
@@ -700,8 +735,7 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
     y_indirect = y_positions - bar_width / 2
 
     for i, scen in enumerate(scenarios):
-        row = i // 2
-        col = i % 2
+        row, col = i // 2, i % 2
         ax = axes[row, col]
 
         df = econ_results[econ_results.scenario == scen]
@@ -730,18 +764,17 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
             y_direct,
             direct_mean,
             left=baseline_gap,
-            color="darkred",
+            color=color_direct,
             alpha=0.8,
             height=bar_width,
             zorder=3,
             label="Direct Impact" if i == 0 else "",
         )
-
         ax.barh(
             y_indirect,
             indirect_mean,
             left=baseline_gap,
-            color="lightcoral",
+            color=color_indirect,
             alpha=0.8,
             height=bar_width,
             zorder=3,
@@ -759,7 +792,6 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
             elinewidth=1,
             zorder=4,
         )
-
         ax.errorbar(
             indirect_mean + baseline_gap,
             y_indirect,
@@ -796,7 +828,8 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
         total_high = direct_sum_high + indirect_sum_high
         total_err = (total_high - total_low) / 2
 
-        sx, sy, dy = 0.65, 0.5, 0.07
+        # Shift annotation block up slightly to make room for the new pop line.
+        sx, sy, dy = 0.5, 0.55, 0.07
         ax.text(
             sx,
             sy,
@@ -835,38 +868,58 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
             fontsize=9,
         )
 
+        # Affected population (millions and percent).
+        pop = _pop_affected(scen)
+        if pop is not None:
+            pop_mean_m = pop["mean"] / 1e6
+            pop_err_m = (pop["p95"] - pop["p5"]) / 2 / 1e6
+            pop_pct = pop["mean"] / us_pop_total * 100
+            ax.text(
+                sx,
+                sy - 4 * dy,
+                f"Pop: {pop_mean_m:.2f} ± {pop_err_m:.2f} M ({pop_pct:.2f}%)",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+            )
+            legend_base = sy - 5.7 * dy
+        else:
+            legend_base = sy - 4.7 * dy
+
         ax.add_patch(
             Rectangle(
-                (sx, sy - 4.7 * dy),
+                (sx, legend_base),
                 0.04,
                 0.03,
-                facecolor="darkred",
+                facecolor=color_direct,
                 alpha=0.8,
                 transform=ax.transAxes,
             )
         )
         ax.text(
             sx + 0.05,
-            sy - 4.7 * dy + 0.015,
+            legend_base + 0.015,
             "Direct Impact",
             transform=ax.transAxes,
             ha="left",
             va="center",
             fontsize=10,
         )
+
         ax.add_patch(
             Rectangle(
-                (sx, sy - 5.7 * dy),
+                (sx, legend_base - dy),
                 0.04,
                 0.03,
-                facecolor="lightcoral",
+                facecolor=color_indirect,
                 alpha=0.8,
                 transform=ax.transAxes,
             )
         )
         ax.text(
             sx + 0.05,
-            sy - 5.7 * dy + 0.015,
+            legend_base - dy + 0.015,
             "Indirect Impact",
             transform=ax.transAxes,
             ha="left",
@@ -875,22 +928,18 @@ def plot_econo_naics_dodged(econ_results, model_type="io", file_suffix=""):
         )
 
         ax.set_yticks(y_positions)
-
         if col == 0:
             ax.set_yticklabels(short_labels, fontsize=10)
         else:
             ax.set_yticklabels([])
-
         if row == 1:
             ax.set_xlabel(LABEL, fontsize=11)
         else:
             ax.tick_params(labelbottom=False)
-
         ax.tick_params(labelsize=8)
         ax.set_facecolor("#F0F0F0")
 
     fig.patch.set_facecolor("#F0F0F0")
-
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.05, wspace=0.05)
     fig.savefig(
@@ -1427,6 +1476,8 @@ def create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines):
     plt.tight_layout()
     plt.show()
     fig.savefig(figures_path / "hazard_maps.png", dpi=300, bbox_inches="tight")
+    # Save pdf version as well for high-quality print use.
+    fig.savefig(figures_path / "hazard_maps.pdf", dpi=300, bbox_inches="tight")
 
 
 def create_storm_hazard_maps(
@@ -1671,6 +1722,8 @@ def create_storm_hazard_maps(
     plt.tight_layout()
     plt.show()
     fig.savefig(figures_path / "hazard_maps_events.png", dpi=300, bbox_inches="tight")
+    # save pdf version as well
+    fig.savefig(figures_path / "hazard_maps_events.pdf", dpi=300, bbox_inches="tight")
 
 
 def create_B_E_maps(
@@ -1888,6 +1941,8 @@ def create_B_E_maps(
 
     plt.tight_layout()
     fig.savefig(figures_path / out_png, dpi=300, bbox_inches="tight")
+    # save as pdf
+    fig.savefig(figures_path / "hazard_maps_ratios.pdf", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -2130,6 +2185,8 @@ def create_ratio_hazard_maps(
 
     plt.tight_layout()
     fig.savefig(figures_path / "hazard_maps_ratios.png", dpi=300, bbox_inches="tight")
+    # pdf version
+    fig.savefig(figures_path / "hazard_maps_ratios.pdf", dpi=300, bbox_inches="tight")
     plt.show()
 
     logger.info("Ratio comparison maps created successfully!")
@@ -2408,6 +2465,10 @@ def create_event_ratio_maps(
     fig.savefig(
         figures_path / "hazard_maps_event_ratios.png", dpi=300, bbox_inches="tight"
     )
+    # pdf version
+    fig.savefig(
+        figures_path / "hazard_maps_event_ratios.pdf", dpi=300, bbox_inches="tight"
+    )
     plt.show()
 
     logger.info("Event ratio comparison maps created successfully!")
@@ -2646,83 +2707,115 @@ if __name__ == "__main__":
 
     ds = xr.open_dataset(DATA_DIR / "gnd_gic_processed" / "gnd_gic_aggregated.nc")
 
-    if USE_ALPHA_BETA_SCENARIO:
-        try:
-            io_results_df = pd.read_csv(FIGURES_DIR / "io_model_results_alpha_beta.csv")
-            confidence_df = pd.read_csv(
-                FIGURES_DIR / "confidence_intervals_alpha_beta.csv"
-            )
-        except Exception as e:
-            logger.error(f"Error loading economic results: {e}")
-
-    elif PROCESS_GND_FILES:
-        try:
-            io_results_df = pd.read_csv(FIGURES_DIR / "io_model_results_gnd_gic.csv")
-            confidence_df = pd.read_csv(
-                FIGURES_DIR / "confidence_intervals_gnd_gic.csv"
-            )
-        except Exception as e:
-            logger.error(f"Error loading economic results: {e}")
-    else:
-        try:
-            io_results_df = pd.read_csv(FIGURES_DIR / "io_model_results.csv")
-            confidence_df = pd.read_csv(FIGURES_DIR / "confidence_intervals.csv")
-        except Exception as e:
-            logger.error(f"Error loading economic results: {e}")
-
-    filename_suffix = (
-        "alpha_beta"
+    # Econ results: load Ghosh + both Leontief specifications
+    suffix = (
+        "_alpha_beta"
         if USE_ALPHA_BETA_SCENARIO
-        else "gnd_gic" if PROCESS_GND_FILES else "eff_gic"
+        else "_gnd_gic" if PROCESS_GND_FILES else ""
+    )
+    filename_suffix = suffix.lstrip("_") or "eff_gic"
+
+    econ_results = load_all_econ_results(suffix)
+    try:
+        confidence_df = pd.read_csv(FIGURES_DIR / f"confidence_intervals{suffix}.csv")
+    except Exception as e:
+        logger.error(f"Error loading confidence intervals: {e}")
+        confidence_df = None
+
+    logger.info("Generating Visualizations - Hazard Maps")
+    create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines)
+
+    logger.info("Generating Visualizations - Hazard Event Maps")
+    create_storm_hazard_maps(
+        e_fields,
+        gannon_e,
+        halloween_e,
+        st_patricks_e,
+        hydro_quebec_e,
+        mt_coords,
+        df_lines,
+        regen_grids=True,
     )
 
-    # logger.info("Generating Visualizations - Hazard Maps")
-    # create_hazard_maps(e_fields, gannon_e, mt_coords, df_lines)
+    logger.info("Generating Visualizations - B and E Field Maps")
+    create_B_E_maps(
+        e_fields,
+        b_fields,
+        hydro_quebec_e,
+        hydro_quebec_b,
+        halloween_e,
+        halloween_b,
+        st_patricks_e,
+        st_patricks_b,
+        gannon_e,
+        gannon_b,
+        mt_coords,
+        df_lines,
+        mode="events",
+        regen_grids=True,
+    )
 
-    # logger.info("Generating Visualizations - Hazard Event Maps")
-    # create_storm_hazard_maps(e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e, mt_coords, df_lines, regen_grids=True)
+    logger.info("Generating Visualizations - B and E Field Maps for Extreme Events")
+    create_B_E_maps(
+        e_fields,
+        b_fields,
+        hydro_quebec_e,
+        hydro_quebec_b,
+        halloween_e,
+        halloween_b,
+        st_patricks_e,
+        st_patricks_b,
+        gannon_e,
+        gannon_b,
+        mt_coords,
+        df_lines,
+        mode="extremes",
+        regen_grids=True,
+    )
 
-    # logger.info("Generating Visualizations - B and E Field Maps")
-    # create_B_E_maps(
-    #     e_fields, b_fields,
-    #     hydro_quebec_e, hydro_quebec_b,
-    #     halloween_e, halloween_b,
-    #     st_patricks_e, st_patricks_b,
-    #     gannon_e, gannon_b,
-    #     mt_coords, df_lines,
-    #     mode="events", regen_grids=True
-    # )
+    create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False)
+    create_event_ratio_maps(
+        e_fields,
+        gannon_e,
+        halloween_e,
+        st_patricks_e,
+        hydro_quebec_e,
+        mt_coords,
+        df_lines,
+        regen_grids=False,
+    )
 
-    # logger.info("Generating Visualizations - B and E Field Maps for Extreme Events")
-    # create_B_E_maps(
-    #     e_fields, b_fields,
-    #     hydro_quebec_e, hydro_quebec_b,
-    #     halloween_e, halloween_b,
-    #     st_patricks_e, st_patricks_b,
-    #     gannon_e, gannon_b,
-    #     mt_coords, df_lines,
-    #     mode="extremes", regen_grids=True
-    # )
+    logger.info("Generating Visualizations - TLs and Subs")
+    create_tl_sub_visualization(ss_gdf_pkl, df_lines)
 
-    # create_ratio_hazard_maps(e_fields, gannon_e, mt_coords, df_lines, regen_grids=False)
-    # create_event_ratio_maps(
-    #     e_fields, gannon_e, halloween_e, st_patricks_e, hydro_quebec_e,
-    #     mt_coords, df_lines, regen_grids=False
-    # )
+    plot_vuln_trafos(mean_vuln_all, df_lines, file_suffix=filename_suffix)
 
-    # logger.info("Generating Visualizations - TLs and Subs")
-    # create_tl_sub_visualization(ss_gdf_pkl, df_lines)
+    plot_gnd_gic_panels(ds, df_substations, file_suffix=filename_suffix)
 
-    # plot_vuln_trafos(mean_vuln_all, df_lines, file_suffix=filename_suffix)
+    # Econ impact figs
+    for mid in ("ghosh", "leontief_cons", "leontief_cp"):
+        if mid in econ_results and confidence_df is not None:
+            plot_econo_naics_dodged(
+                econ_results[mid],
+                model_type=mid,
+                file_suffix=filename_suffix,
+                confidence_df=confidence_df,
+            )
 
-    # plot_gnd_gic_panels(ds, df_substations, file_suffix=filename_suffix)
+            plot_socio_economic_impact(
+                econ_results[mid],
+                confidence_df,
+                model_type=mid,
+                file_suffix=filename_suffix,
+            )
 
-    # plot_econo_naics(io_results_df, model_type="io", file_suffix=filename_suffix)
-    # plot_socio_economic_impact(
-    #     io_results_df, confidence_df, model_type="io", file_suffix=filename_suffix
-    # )
-
-    # plot_econo_naics_dodged(io_results_df, model_type="io", file_suffix=filename_suffix)
+    # Comparison table across all three models
+    if econ_results:
+        comparison_df = export_econ_comparison_table(
+            econ_results, file_suffix=f"_{filename_suffix}"
+        )
+        print("\nComparison table preview:")
+        print(comparison_df.head(10))
 
     # Substations data
     voronoi_gdf = gpd.read_file(
@@ -2772,7 +2865,9 @@ if __name__ == "__main__":
             "hydro_quebec_b": hydro_quebec_b,
         },
         "economics": {
-            "io_results": io_results_df,
+            "ghosh_results": econ_results.get("ghosh"),
+            "leontief_cons_results": econ_results.get("leontief_cons"),
+            "leontief_cp_results": econ_results.get("leontief_cp"),
             "confidence_intervals": confidence_df,
         },
         "spatial_risk": {

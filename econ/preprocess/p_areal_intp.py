@@ -22,11 +22,12 @@ from econ.preprocess.p_econ_data import (
     load_socioeconomic_data,
     create_voronoi_polygons,
     create_zcta_population_csv,
-    create_state_gdp_employment_data,
     create_naics_establishments_data,
     create_zcta_within_rto,
-    create_naics_est_gdp2022_zcta_csv,
+    create_zcta_to_county_mapping,
+    create_zcta_county_anchored_gdp,
 )
+from econ.preprocess.fetch_bea_census import fetch_all, DEFAULT_YEAR
 from configs import setup_logger, get_data_dir, DATA_DIR
 
 os.environ.setdefault("GDAL_CACHEMAX", "256")
@@ -321,21 +322,33 @@ def load_processed_data():
                 regions_pop_df,
                 zcta_business_gdf,
                 states_gdf,
-                df_other,
             ) = pickle.load(f)
     else:
         logger.warning(f"Processed economic data not found at {processed_econ_file}")
         logger.info("Running consolidated economic data pipeline...")
         os.makedirs(processed_econ_dir, exist_ok=True)
+
+        cagdp2, _, _ = fetch_all(year=DEFAULT_YEAR)
+
         zcta_pop_20 = create_zcta_population_csv(raw_data_folder)
-        _ = create_state_gdp_employment_data(raw_data_folder)
-        df_naics_zcta = create_naics_establishments_data(raw_data_folder)
-        zcta_within_rto = create_zcta_within_rto(raw_data_folder)
-        naics_est_gdp = create_naics_est_gdp2022_zcta_csv(
-            raw_data_folder, df_naics_zcta, zcta_within_rto
+        df_naics_zcta = create_naics_establishments_data(
+            raw_data_folder, year=DEFAULT_YEAR
         )
-        regions_pop_df, zcta_business_gdf, states_gdf, df_other = (
-            load_socioeconomic_data(naics_est_gdp, zcta_pop_20)
+        zcta_within_rto = create_zcta_within_rto(raw_data_folder)
+        zcta_to_county = create_zcta_to_county_mapping(
+            raw_data_folder, year=DEFAULT_YEAR
+        )
+
+        naics_est_gdp = create_zcta_county_anchored_gdp(
+            df_naics_zcta=df_naics_zcta,
+            zcta_to_county=zcta_to_county,
+            zcta_pop=zcta_pop_20,
+            cagdp2=cagdp2,
+            year=DEFAULT_YEAR,
+        )
+
+        regions_pop_df, zcta_business_gdf, states_gdf = load_socioeconomic_data(
+            naics_est_gdp, zcta_pop_20
         )
         with open(processed_econ_file, "wb") as f:
             pickle.dump(
@@ -345,7 +358,6 @@ def load_processed_data():
                     regions_pop_df,
                     zcta_business_gdf,
                     states_gdf,
-                    df_other,
                 ),
                 f,
             )

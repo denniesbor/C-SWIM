@@ -15,7 +15,7 @@ logger = setup_logger(log_file="logs/run_viz.log")
 VIZ_DIR = Path(__file__).parent / "viz"
 
 STEPS = [
-    ("01", "viz.py", "Generate economic impact figures"),
+    ("01", "plots.py", "Generate economic impact figures"),
     ("02", "plot_fragility.py", "Plot fragility curves"),
 ]
 

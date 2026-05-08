@@ -32,35 +32,47 @@ return_periods = np.arange(50, 251, 25)
 
 
 def load_and_aggregate_tiles():
-    """Load all tile files and aggregate economic data by substation"""
+    """Load per-tile interpolation outputs, aggregate to substation level, and
+    rescale to match the ZCTA totals in the socioeconomic pickle.
+
+    Rescaling corrects for mass loss introduced by the tile-based dasymetric
+    interpolation (ZCTAs that straddle tile boundaries or fall on pixels the
+    land mask drops). Factors are applied per column so GDP sector mix is
+    preserved.
+    """
     land_mask_dir = DATA_LOC / "land_mask"
     tile_dir = land_mask_dir / "coarse_interpolation_tiles"
 
-    parts = []
-    for fp in tile_dir.glob("tile_*.gpkg"):
-        gdf = gpd.read_file(fp)
-        parts.append(gdf)
-
+    parts = [gpd.read_file(fp) for fp in tile_dir.glob("tile_*.gpkg")]
     if not parts:
-        raise RuntimeError("No tile files found")
-
+        raise RuntimeError(f"No tile files found in {tile_dir}")
     merged = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True), crs=parts[0].crs)
 
-    econ_cols = [
-        c
-        for c in merged.columns
-        if c.startswith("GDP_") or c.startswith("EST_") or c == "POP20"
-    ]
+    gdp_cols = sorted(c for c in merged.columns if c.startswith("GDP_"))
+    est_cols = sorted(c for c in merged.columns if c.startswith("EST_"))
+    pop_col = ["POP20"] if "POP20" in merged.columns else []
+    econ_cols = gdp_cols + est_cols + pop_col
 
     aggregated = (
         merged.sort_values("sub_id")
         .groupby("sub_id", as_index=False)
-        .agg({**{c: "mean" for c in econ_cols}, "geometry": "first"})
+        .agg({**{c: "sum" for c in econ_cols}, "geometry": "first"})
     )
-
     aggregate_gdf = gpd.GeoDataFrame(
         aggregated, geometry=aggregated.geometry, crs=merged.crs
     )
+
+    socio_pkl = DATA_LOC / "processed_econ" / "socioeconomic_data.pkl"
+    with open(socio_pkl, "rb") as f:
+        _, _, _, zcta_business_gdf, _ = pickle.load(f)
+
+    for c in econ_cols:
+        if c not in zcta_business_gdf.columns:
+            continue
+        target = float(zcta_business_gdf[c].sum())
+        observed = float(aggregate_gdf[c].sum())
+        if observed > 0 and target > 0:
+            aggregate_gdf[c] *= target / observed
 
     return aggregate_gdf
 

@@ -283,9 +283,11 @@ def plot_regression_validation(regional_results, xm, ym, cell_size_m, figures_di
     x3, y3 = regional_200["lhs_mean"].to_numpy(), regional_200["rhs_mean"].to_numpy()
     x4, y4 = regional_250["lhs_mean"].to_numpy(), regional_250["rhs_mean"].to_numpy()
 
-    all_vals = np.concatenate([x1, x2, x3, x4, y1, y2, y3, y4])
-    lim_max = max(150, np.nanmax(all_vals))
-    ref_x = np.array([0.0, lim_max])
+    all_x = np.concatenate([x1, x2, x3, x4])
+    all_y = np.concatenate([y1, y2, y3, y4])
+    lim_max = max(150, np.nanmax([all_x, all_y]))
+    lim_min = 0.0
+    ref_x = np.array([lim_min, lim_max])
 
     pairs = [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
     titles = [
@@ -299,7 +301,11 @@ def plot_regression_validation(regional_results, xm, ym, cell_size_m, figures_di
     axes = axes.ravel()
 
     for i, (ax, (x, y), title) in enumerate(zip(axes, pairs, titles)):
-        r = np.corrcoef(x, y)[0, 1] if np.isfinite(x).sum() > 1 else np.nan
+        r = (
+            np.corrcoef(x, y)[0, 1]
+            if np.isfinite(x).sum() > 1 and np.isfinite(y).sum() > 1
+            else np.nan
+        )
         rmse = np.sqrt(np.nanmean((x - y) ** 2)) if x.size > 0 else np.nan
 
         ax.scatter(
@@ -324,16 +330,21 @@ def plot_regression_validation(regional_results, xm, ym, cell_size_m, figures_di
                 rm = np.corrcoef(xm[maskm], ym[maskm])[0, 1]
                 rmse_m = np.sqrt(np.mean((xm[maskm] - ym[maskm]) ** 2))
 
-        ax.set_xlim(0.0, lim_max)
-        ax.set_ylim(0.0, lim_max)
+        ax.set_xlim(lim_min, lim_max)
+        ax.set_ylim(lim_min, lim_max)
         ax.set_aspect("equal", adjustable="box")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.grid(True, axis="both", linestyle=":", linewidth=0.6, alpha=0.85)
 
-        txt = f"r={r:.1f}, RMSE={rmse:.1f}"
         if np.isfinite(rm) and np.isfinite(rmse_m):
-            txt += f"\nMeas vs Sim: r={rm:.1f}, RMSE={rmse_m:.1f}"
+            txt = (
+                f"r={r:.1f}, RMSE={rmse:.1f}\n"
+                f"Meas vs Sim: r={rm:.1f}, \nRMSE={rmse_m:.1f}"
+            )
+        else:
+            txt = f"r={r:.1f}, RMSE={rmse:.1f}"
+
         ax.text(
             0.6, 0.4, txt, transform=ax.transAxes, va="bottom", ha="left", fontsize=9
         )
@@ -343,16 +354,6 @@ def plot_regression_validation(regional_results, xm, ym, cell_size_m, figures_di
     axes[2].set_ylabel("Simulation GIC abs [A]")
     axes[2].set_xlabel("GIC abs [A] (Alpha–Beta derived / Scaled)")
     axes[3].set_xlabel("GIC abs [A] (Alpha–Beta derived / Scaled)")
-
-    axes[0].text(
-        0.0,
-        1.02,
-        f"Regional means on a {cell_size_m // 1000} km grid. Crimson diamonds: measured (TVA & NERC) vs simulation (Gannon)",
-        transform=axes[0].transAxes,
-        fontsize=9,
-        ha="left",
-        va="bottom",
-    )
 
     plt.tight_layout(h_pad=0.8, w_pad=0.8)
     for ext in ["png", "pdf"]:

@@ -78,6 +78,7 @@ viz/debug.py**/__pycache__/
 *.pwd
 *.aux
 *.RAW
+.env
 
 
 #Rep mapping
@@ -96,3 +97,5 @@ data/rep_data/uiuc150/n_nodes.npy
 data/rep_data/uiuc150/sub_look_up.pkl
 data/rep_data/uiuc150/sub_ref.pkl
 data/rep_data/uiuc150/substations_df.pkl
+
+data/grid_mapping.csv

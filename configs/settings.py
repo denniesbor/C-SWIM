@@ -158,7 +158,7 @@ tva_mag = tva_folder / "mag"
 
 peak_times_path = DATA_DIR / "peak_times_1.npy"
 ground_gic_folder = DATA_DIR / "gannon_gnd_gic"
-cache_file = DATA_DIR / "gannon_gic_processed" / "partial_pveubuntu.npz"
+cache_file = DATA_DIR / "gannon_gic_processed" / "gic_data.npz"
 
 VAL_FIGURES_DIR = FIGURES_DIR
 

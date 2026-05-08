@@ -3,6 +3,7 @@
 import pickle
 
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -10,10 +11,100 @@ from shapely.geometry import LineString, Point
 from shapely.ops import unary_union
 from scipy.interpolate import griddata
 
-from configs import setup_logger, get_data_dir
+from configs import setup_logger, get_data_dir, FIGURES_DIR
 
 logger = setup_logger("plot-utils")
 DATA_LOC = get_data_dir(econ=True)
+
+# Newly incorporated econ models
+ECON_MODELS = {
+    "ghosh": "ghosh_results",
+    "leontief_cons": "leontief_consumption_results",
+    "leontief_cp": "leontief_consumption_production_results",
+}
+
+# Colorblind-friendly palettes (Okabe-Ito), one per model
+ECON_PALETTES = {
+    "ghosh": {
+        "direct": "darkred",
+        "indirect": "lightcoral",
+        "label": "Ghosh (supply-driven)",
+    },
+    "leontief_cons": {
+        "direct": "#0072B2",  # blue
+        "indirect": "#56B4E9",  # sky blue
+        "label": "Leontief consumption",
+    },
+    "leontief_cp": {
+        "direct": "#009E73",  # bluish green
+        "indirect": "#8FD9B6",  # lighter green
+        "label": "Leontief consumption + production",
+    },
+}
+
+
+def export_econ_comparison_table(econ_results, file_suffix=""):
+    """Export a compact comparison table of the three I-O models.
+
+    Rows are scenarios, columns are (model, metric). Metrics are total daily
+    impact at mean/p5/p95 confidence and sector-total direct/indirect split.
+    Units are $ billions per day. Writes CSV suitable for latex conversion.
+    """
+    SCALE = 1_000  # $M -> $B
+    rows = []
+
+    for model_id, df in econ_results.items():
+        for scen in df["scenario"].unique():
+            mean = df[(df.scenario == scen) & (df.confidence == "mean")]
+            p5 = df[(df.scenario == scen) & (df.confidence == "p5")]
+            p95 = df[(df.scenario == scen) & (df.confidence == "p95")]
+
+            rows.append(
+                {
+                    "model": model_id,
+                    "scenario": scen,
+                    "direct_mean_bn": mean.direct_shock.abs().sum() / SCALE,
+                    "direct_p5_bn": p5.direct_shock.abs().sum() / SCALE,
+                    "direct_p95_bn": p95.direct_shock.abs().sum() / SCALE,
+                    "indirect_mean_bn": mean.multiplier_effect.abs().sum() / SCALE,
+                    "indirect_p5_bn": p5.multiplier_effect.abs().sum() / SCALE,
+                    "indirect_p95_bn": p95.multiplier_effect.abs().sum() / SCALE,
+                    "total_mean_bn": mean.total_impact.abs().sum() / SCALE,
+                    "total_p5_bn": p5.total_impact.abs().sum() / SCALE,
+                    "total_p95_bn": p95.total_impact.abs().sum() / SCALE,
+                }
+            )
+
+    out = pd.DataFrame(rows).round(2)
+
+    # Sort scenarios in return-period order where possible
+    scenario_order = [
+        "gannon-year",
+        "50-year",
+        "75-year",
+        "100-year",
+        "125-year",
+        "150-year",
+        "175-year",
+        "200-year",
+        "225-year",
+        "250-year",
+    ]
+    out["scen_rank"] = out["scenario"].apply(
+        lambda s: scenario_order.index(s) if s in scenario_order else 999
+    )
+    model_order = ["ghosh", "leontief_cons", "leontief_cp"]
+    out["model_rank"] = out["model"].apply(
+        lambda m: model_order.index(m) if m in model_order else 999
+    )
+    out = out.sort_values(["scen_rank", "model_rank"]).drop(
+        columns=["scen_rank", "model_rank"]
+    )
+
+    out_fp = FIGURES_DIR / f"econ_comparison_table{file_suffix}.csv"
+    out.to_csv(out_fp, index=False)
+    logger.info(f"Saved comparison table: {out_fp}")
+    return out
 
 
 def setup_map(ax, spatial_extent=[-120, -75, 25, 50]):
@@ -86,6 +177,19 @@ def process_substations(substations_gdf):
     )
 
     return gdf, substations_gdf
+
+
+def load_all_econ_results(suffix):
+    """Load whichever of the three econ result CSVs exist on disk."""
+    out = {}
+    for model_id, stem in ECON_MODELS.items():
+        path = FIGURES_DIR / f"{stem}{suffix}.csv"
+        if path.exists():
+            out[model_id] = pd.read_csv(path)
+            logger.info(f"Loaded {path.name} ({len(out[model_id])} rows)")
+        else:
+            logger.warning(f"Missing {path.name}")
+    return out
 
 
 def get_conus_polygon():
