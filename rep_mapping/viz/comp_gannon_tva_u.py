@@ -12,24 +12,23 @@ from rep_mapping.rep_config import (
 
 setup_matplotlib()
 
-# Wong colorblind-safe palette
-C_UIUC = "#0072B2"  # blue
-C_TVA = "#E69F00"  # orange
+C_UIUC = "#0072B2"
+C_TVA = "#E69F00"
 C_MEASURED = "black"
 
 uiuc_gic = pd.read_parquet(UIUC_DIR / "ground_gic_ts_gannon.parquet")
 tva_gic = pd.read_parquet(TVA_DIR / "ground_gic_ts.parquet")
+mc = pd.read_parquet(TVA_DIR / "ground_gic_mc.parquet")
 time_axis = np.load(TVA_DIR / "time_axis.npy", allow_pickle=True)
 ds = xr.open_dataset(DEVICES_NC)
 gic_var = list(ds.data_vars)[0]
+summary = pd.read_csv(TVA_DIR / "ground_gic_mc_summary.csv").set_index("metric")
 
-# Time overlap
 t0 = max(pd.to_datetime(time_axis[0]), pd.to_datetime(ds.time.values[0]))
 t1 = min(pd.to_datetime(time_axis[-1]), pd.to_datetime(ds.time.values[-1]))
 tmask = (pd.to_datetime(time_axis) >= t0) & (pd.to_datetime(time_axis) <= t1)
 time_plot = time_axis[tmask]
 
-# Data
 uiuc_vals = uiuc_gic.loc[93].values[tmask].copy()
 tva_vals = tva_gic.loc["106782533.0"].values[tmask].copy()
 
@@ -39,7 +38,6 @@ meas_mask = (meas_t >= t0) & (meas_t <= t1)
 meas_t_plot = meas_t[meas_mask]
 meas_v = meas[gic_var].values[meas_mask].astype(float)
 
-# Pearson r — polarity correct if negative
 mod_interp_uiuc = np.interp(
     meas_t_plot.astype(np.int64), pd.to_datetime(time_plot).astype(np.int64), uiuc_vals
 )
@@ -58,9 +56,19 @@ if r_tva < 0:
     tva_vals = -tva_vals
     r_tva = abs(r_tva)
 
-# Peak GIC distributions
+# UIUC peak distribution (deterministic, 98 substations)
 uiuc_max = uiuc_gic.abs().max(axis=1).values
-tva_max = tva_gic.abs().max(axis=1).values
+uiuc_p95 = float(np.percentile(uiuc_max, 95))
+
+# TVA MC CDF band: at each rank-k position, spread across 1000 runs
+peak_mc = mc.to_numpy(dtype=float)       # (1000, 84)
+x_sorted = np.sort(peak_mc, axis=1)      # sorted peaks per run
+n_tva = x_sorted.shape[1]
+y_tva = np.linspace(0, 1, n_tva)
+x_med = np.median(x_sorted, axis=0)
+x_p5 = np.percentile(x_sorted, 5, axis=0)
+x_p95 = np.percentile(x_sorted, 95, axis=0)
+ens_p95 = float(summary.loc["headline_p95_ground_gic_A", "median"])
 
 fig, axes = plt.subplots(2, 1, figsize=(8, 7))
 
@@ -73,20 +81,15 @@ ax.plot(
     linewidth=1.5,
     label=f"UIUC150 synthetic (n={len(uiuc_max)})",
 )
-ax.plot(
-    np.sort(tva_max),
-    np.linspace(0, 1, len(tva_max)),
-    color=C_TVA,
-    linewidth=1.5,
-    linestyle="--",
-    label=f"TVA OSM+HIFLD (n={len(tva_max)})",
-)
-ax.axvline(
-    np.percentile(uiuc_max, 95), color=C_UIUC, linewidth=0.8, linestyle=":", alpha=0.7
-)
-ax.axvline(
-    np.percentile(tva_max, 95), color=C_TVA, linewidth=0.8, linestyle=":", alpha=0.7
-)
+ax.plot(x_med, y_tva, color=C_TVA, linewidth=1.5, linestyle="--",
+        label=f"TVA OSM+HIFLD median (n={n_tva})")
+ax.fill_betweenx(y_tva, x_p5, x_p95, color=C_TVA, alpha=0.25,
+                 label="TVA 5-95% across runs")
+
+ax.axvline(uiuc_p95, color=C_UIUC, linewidth=0.8, linestyle=":", alpha=0.7)
+ax.axvline(ens_p95, color=C_TVA, linewidth=0.9, linestyle=":",
+           label=f"TVA ens. median p95 = {ens_p95:.1f} A")
+
 ax.set_xlim(left=0)
 ax.set_ylim(0, 1)
 ax.set_xlabel("Peak ground GIC (A)")
@@ -95,33 +98,24 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 ax.tick_params(direction="in")
 ax.grid(alpha=0.3, lw=0.5)
-ax.legend(frameon=False, fontsize=9, loc="lower right")
+ax.legend(frameon=False, fontsize=8.5, loc="lower right")
 ax.xaxis.get_major_ticks()[0].label1.set_visible(False)
 ax.text(
-    0.0,
-    1.04,
+    0.0, 1.04,
     "(a) Peak ground GIC distribution — Gannon storm",
-    transform=ax.transAxes,
-    fontsize=11,
-    va="bottom",
+    transform=ax.transAxes, fontsize=11, va="bottom",
 )
 
 # (b) Johnsonville time series
 ax = axes[1]
 ax.plot(
-    time_plot,
-    uiuc_vals,
-    color=C_UIUC,
-    linewidth=0.9,
-    linestyle="--",
+    time_plot, uiuc_vals,
+    color=C_UIUC, linewidth=0.9, linestyle="--",
     label=f"UIUC150 sub 93 (0.6 km, $r$={r_uiuc:.2f})",
 )
 ax.plot(
-    time_plot,
-    tva_vals,
-    color=C_TVA,
-    linewidth=0.9,
-    linestyle="-.",
+    time_plot, tva_vals,
+    color=C_TVA, linewidth=0.9, linestyle="-.",
     label=f"TVA OSM sub (0.7 km, $r$={r_tva:.2f})",
 )
 ax.plot(meas_t_plot, meas_v, color=C_MEASURED, linewidth=1.0, label="Measured")
@@ -147,16 +141,13 @@ ax.tick_params(direction="in")
 ax.grid(alpha=0.3, lw=0.5)
 ax.legend(frameon=False, fontsize=9, loc="upper left")
 ax.text(
-    0.0,
-    1.04,
+    0.0, 1.04,
     "(b) Johnsonville — Modeled vs measured",
-    transform=ax.transAxes,
-    fontsize=11,
-    va="bottom",
+    transform=ax.transAxes, fontsize=11, va="bottom",
 )
 
 plt.tight_layout()
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 fig.savefig(FIGURES_DIR / "gannon_cdf_johnsonville.png", dpi=300, bbox_inches="tight")
-fig.savefig(FIGURES_DIR / "gannon_cdf_johnsonville.pdf", dpi=300, bbox_inches="tight")
+fig.savefig(FIGURES_DIR / "gannon_cdf_johnsonville.pdf", bbox_inches="tight")
 plt.close()

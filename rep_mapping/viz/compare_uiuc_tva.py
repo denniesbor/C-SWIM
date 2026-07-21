@@ -45,7 +45,7 @@ mask = time_pd >= "2024-05-10 00:00"
 time_axis = time_axis[mask]
 
 n = len(PAIRS)
-fig, axes = plt.subplots(nrows=n, ncols=1, figsize=(8, 10), sharex=True)
+fig, axes = plt.subplots(nrows=n, ncols=1, figsize=(7.8, 9), sharex=True)
 
 for j, (sub_u, sub_t, dist_km) in enumerate(PAIRS):
     ax = axes[j]
@@ -87,7 +87,6 @@ for j, (sub_u, sub_t, dist_km) in enumerate(PAIRS):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(direction="in", labelsize=10)
-    ax.set_ylabel("GIC (A)", fontsize=FONTSIZE_MAIN)
 
     text_x = 1.02
     text_y = 0.95
@@ -158,6 +157,7 @@ for j, (sub_u, sub_t, dist_km) in enumerate(PAIRS):
         )
         ax.set_xlabel("Time (UTC)", fontsize=FONTSIZE_MAIN)
 
+fig.supylabel("Ground GIC (A)", fontsize=FONTSIZE_MAIN, x=0.035)
 plt.tight_layout()
 plt.subplots_adjust(hspace=0.05)
 
@@ -165,8 +165,5 @@ FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 fig.savefig(
     FIGURES_DIR / "modelled_vs_modelled_gannon.png", dpi=300, bbox_inches="tight"
 )
-fig.savefig(
-    FIGURES_DIR / "modelled_vs_modelled_gannon.pdf", dpi=300, bbox_inches="tight"
-)
-logger.info(f"Saved to {FIGURES_DIR}")
-plt.show()
+fig.savefig(FIGURES_DIR / "modelled_vs_modelled_gannon.pdf", bbox_inches="tight")
+logger.info("Saved to %s", FIGURES_DIR)

@@ -41,7 +41,7 @@ SCHEME = {
     "monitor": "#FFD700",  # yellow star — distinct enough
 }
 
-EXTENT = [-91.5, -80.5, 32, 37.8]
+EXTENT = [-90.5, -81.6, 32.2, 37.7]
 PANEL_FONTSIZE = 11
 
 
@@ -80,8 +80,8 @@ def setup_ax(ax, proj_data):
     gl.bottom_labels = True
     gl.xformatter = LONGITUDE_FORMATTER
     gl.yformatter = LATITUDE_FORMATTER
-    gl.xlabel_style = {"size": 7}
-    gl.ylabel_style = {"size": 7}
+    gl.xlabel_style = {"size": 8}
+    gl.ylabel_style = {"size": 8}
 
 
 def parse_uiuc150():
@@ -135,7 +135,7 @@ for n in G_backbone.nodes:
 ds = xr.open_dataset(DEVICES_NC)
 
 proj_data = ccrs.PlateCarree()
-fig, axes = plt.subplots(2, 1, figsize=(10, 10), subplot_kw={"projection": proj_data})
+fig, axes = plt.subplots(2, 1, figsize=(8, 9), subplot_kw={"projection": proj_data})
 
 for ax in axes:
     setup_ax(ax, proj_data)
@@ -167,7 +167,7 @@ for ax in axes:
         ax.annotate(
             dev,
             xy=(lon, lat),
-            fontsize=5.5,
+            fontsize=8,
             xytext=(3, 3),
             textcoords="offset points",
             transform=proj_data,
@@ -365,20 +365,20 @@ col2 = [
 leg1 = axes[1].legend(
     handles=col1,
     loc="lower left",
-    bbox_to_anchor=(0.0, -0.18),
+    bbox_to_anchor=(0.0, -0.24),
     bbox_transform=axes[1].transAxes,
     ncol=1,
-    fontsize=8,
+    fontsize=9,
     frameon=False,
 )
 axes[1].add_artist(leg1)
 axes[1].legend(
     handles=col2,
     loc="lower left",
-    bbox_to_anchor=(0.35, -0.18),
+    bbox_to_anchor=(0.35, -0.24),
     bbox_transform=axes[1].transAxes,
     ncol=1,
-    fontsize=8,
+    fontsize=9,
     frameon=False,
 )
 
@@ -386,4 +386,5 @@ plt.tight_layout()
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 fig.savefig(FIGURES_DIR / "tva_uiuc_backbone.png", dpi=300, bbox_inches="tight")
 fig.savefig(FIGURES_DIR / "tva_uiuc_backbone.pdf", dpi=300, bbox_inches="tight")
+print(f"Saved figure to {FIGURES_DIR / 'tva_uiuc_backbone.png'} and .pdf")
 plt.close()
