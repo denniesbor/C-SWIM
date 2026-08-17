@@ -813,7 +813,7 @@ if __name__ == "__main__":
             bus_ids_map,
             sub_look_up,
             df_lines,
-            df_transformer,
+            substations_df,
         )
         logger.info(f"Max value in Y: {np.max(Y)}")
         logger.info(f"Min value in Y: {np.min(Y)}")

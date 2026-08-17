@@ -93,7 +93,7 @@ def essential_raster_interp() -> bool:
 
 def essential_build_tech_sam() -> bool:
     tables_dir = ECON_DATA_DIR / "supply_use_tables"
-    g_output_dir = ECON_DATA_DIR / "gross_output"
+    g_output_dir = ECON_DATA_DIR / "10sector"
     files = [
         tables_dir / "use_tables.csv",
         tables_dir / "supply_tables.csv",

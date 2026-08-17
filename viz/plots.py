@@ -57,6 +57,9 @@ setup_matplotlib()
 
 warnings.filterwarnings("ignore")
 
+mpl.rcParams["pdf.fonttype"] = 42  
+mpl.rcParams["ps.fonttype"] = 42 
+
 
 def plot_socio_economic_impact(
     results_data, confidence_df, model_type="io", file_suffix=""
@@ -202,7 +205,7 @@ def plot_socio_economic_impact(
         color="purple",
     )
     axes[1, 0].plot(direct_x_sorted, direct_mean_sorted, "-", color="purple", alpha=0.7)
-    axes[1, 0].set_ylabel(r"Direct Impact (\$Bn/day)")
+    axes[1, 0].set_ylabel(r"Direct Impact (\$Billion/day)")
     axes[1, 0].set_xlabel("Storm Return Period (years)")
     axes[1, 0].set_title("(c) Direct Economic Loss per Day", loc="left", fontsize=11)
     axes[1, 0].set_ylim(0, econ_ylim)
@@ -217,7 +220,7 @@ def plot_socio_economic_impact(
         color="blue",
     )
     axes[1, 1].plot(total_x_sorted, total_mean_sorted, "-", color="blue", alpha=0.7)
-    axes[1, 1].set_ylabel(r"Total Impact (\$Bn/day)")
+    axes[1, 1].set_ylabel(r"Total Impact (\$Billion/day)")
     axes[1, 1].set_xlabel("Storm Return Period (years)")
     axes[1, 1].set_title("(d) Total Economic Loss per Day", loc="left", fontsize=11)
     axes[1, 1].set_ylim(0, econ_ylim)
@@ -337,6 +340,7 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
                 alpha=0.7,
                 transform=ccrs.PlateCarree(),
                 zorder=3,
+                rasterized=True, 
             )
 
         line_coords = [list(geom.coords) for geom in df_lines["geometry"]]
@@ -349,6 +353,7 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
             colors=line_colors,
             transform=ccrs.PlateCarree(),
             zorder=5,
+            rasterized=True, 
         )
         ax.add_collection(lc)
 
@@ -417,15 +422,22 @@ def plot_vuln_trafos(vuln_data, df_lines, file_suffix=""):
 
     fig.savefig(
         FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.pdf",
-        dpi=300,
+        dpi=600,
         bbox_inches="tight",
     )
     fig.savefig(
         FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.png",
-        dpi=300,
+        dpi=600,
         bbox_inches="tight",
     )
-    plt.show()
+   
+    fig.savefig(
+        FIGURES_DIR / f"vulnerable_trafos_{file_suffix}.eps",
+        dpi=600,
+        bbox_inches="tight",
+    )
+    
+    return
 
 
 def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
@@ -435,7 +447,7 @@ def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
     distinguishable in the paper appendix while keeping an identical layout.
     """
     SCALE = 1_000
-    LABEL = "Impact (Bn $/day)"
+    LABEL = "Impact (Billion $/day)"
 
     palette = ECON_PALETTES.get(model_type, ECON_PALETTES["ghosh"])
     color_direct = palette["direct"]
@@ -553,7 +565,7 @@ def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
         ax.text(
             sx,
             sy - dy,
-            f"Direct: ${direct_mean:.1f} ± {direct_err:.1f} Bn",
+            f"Direct: ${direct_mean:.1f} ± {direct_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -562,7 +574,7 @@ def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
         ax.text(
             sx,
             sy - 2 * dy,
-            f"Indirect: ${indirect_mean:.1f} ± {indirect_err:.1f} Bn",
+            f"Indirect: ${indirect_mean:.1f} ± {indirect_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -571,7 +583,7 @@ def plot_econo_naics(econ_results, model_type="ghosh", file_suffix=""):
         ax.text(
             sx,
             sy - 3 * dy,
-            f"Total: ${total_mean:.1f} ± {total_err:.1f} Bn",
+            f"Total: ${total_mean:.1f} ± {total_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -659,7 +671,7 @@ def plot_econo_naics_dodged(
     provided the per-scenario affected population is added to the annotation.
     """
     SCALE = 1_000
-    LABEL = "Impact (Bn $/day)"
+    LABEL = "Impact (Billion $/day)"
 
     palette = ECON_PALETTES.get(model_type, ECON_PALETTES["ghosh"])
     color_direct = palette["direct"]
@@ -843,7 +855,7 @@ def plot_econo_naics_dodged(
         ax.text(
             sx,
             sy - dy,
-            f"Direct: ${direct_sum_mean:.1f} ± {direct_err:.1f} Bn",
+            f"Direct: ${direct_sum_mean:.1f} ± {direct_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -852,7 +864,7 @@ def plot_econo_naics_dodged(
         ax.text(
             sx,
             sy - 2 * dy,
-            f"Indirect: ${indirect_sum_mean:.1f} ± {indirect_err:.1f} Bn",
+            f"Indirect: ${indirect_sum_mean:.1f} ± {indirect_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -861,7 +873,7 @@ def plot_econo_naics_dodged(
         ax.text(
             sx,
             sy - 3 * dy,
-            f"Total: ${total_mean:.1f} ± {total_err:.1f} Bn",
+            f"Total: ${total_mean:.1f} ± {total_err:.1f} Billion",
             transform=ax.transAxes,
             ha="left",
             va="top",
@@ -2609,7 +2621,7 @@ def create_tl_sub_visualization(gdf_sub, tl_df):
         "categories": ["transmission", "generation"],
         "markers": {"transmission": "s", "generation": "^"},
         "sizes": {"transmission": 3, "generation": 6},
-        "spatial_extent": [-120, -75, 25, 50],
+        "spatial_extent": [-125, -75, 25, 50],
         "figsize": (10, 7),
     }
 
@@ -2844,11 +2856,84 @@ if __name__ == "__main__":
     sub_coords["sub_id"] = sub_coords["sub_id"].astype(str)
     substation_risk = substation_risk.merge(sub_coords, on="sub_id", how="left")
 
-    export_data = {
+    # export_data = {
+    #     "geo": {
+    #         "transmission_lines": df_lines,
+    #         "substations": df_substations,
+    #         "substations_gdf": ss_gdf_pkl,
+    #         "vulnerable_substations": mean_vuln_all,  # sub_id, scenario, failure_prob
+    #         "gnd_gic_ds": ds,  # xarray Dataset, per-substation GIC stats across scenarios
+    #     },
+    #     "fields": {
+    #         "mt_coords": mt_coords,
+    #         "mt_names": mt_names,
+    #         "e_fields": e_fields,
+    #         "b_fields": b_fields,
+    #         "gannon_e": gannon_e,
+    #         "gannon_b": gannon_b,
+    #         "halloween_e": halloween_e,
+    #         "halloween_b": halloween_b,
+    #         "st_patricks_e": st_patricks_e,
+    #         "st_patricks_b": st_patricks_b,
+    #         "hydro_quebec_e": hydro_quebec_e,
+    #         "hydro_quebec_b": hydro_quebec_b,
+    #     },
+    #     "economics": {
+    #         "ghosh_results": econ_results.get("ghosh"),
+    #         "leontief_cons_results": econ_results.get("leontief_cons"),
+    #         "leontief_cp_results": econ_results.get("leontief_cp"),
+    #         "confidence_intervals": confidence_df,
+    #     },
+    #     "spatial_risk": {
+    #         "substation_risk": substation_risk,  # sub_id, POP20, GDP_*, EST_*, failure_prob_*
+    #         "voronoi_polygons": voronoi_gdf,  # substation service areas
+    #         "aggregate_gdf": aggregate_gdf,  # raw dasymetric allocation
+    #     },
+    #     "metadata": {
+    #         "scenarios": list(vuln_pivot.columns.drop("sub_id")),
+    #         "units": {
+    #             "e_field": "V/km",
+    #             "b_field": "nT",
+    #             "voltage": "V",
+    #             "failure_prob": "probability (0-1)",
+    #             "population": "persons",
+    #             "gdp": "million $/day",
+    #         },
+    #         "crs": "EPSG:4326",
+    #         "notes": {
+    #             "substation_risk": "Population/GDP allocated to substations via Voronoi dasymetric interpolation",
+    #             "pop_at_risk": "Calculate as POP20 * failure_prob for each scenario",
+    #         },
+    #     },
+    # }
+
+    # export_dir = DATA_LOC / "wsj"
+    # export_dir.mkdir(parents=True, exist_ok=True)
+    # export_path = export_dir / "viz_export_data.pkl"
+    # with open(export_path, "wb") as f:
+    #     pickle.dump(export_data, f)
+
+    # print(f"Exported: {export_path} ({export_path.stat().st_size / 1e6:.1f} MB)")
+
+    EXPORT_GRIDS = True
+    if EXPORT_GRIDS:
+        grids = {}
+        for grid_file in (DATA_LOC / "viz_data").glob("grid_*.pkl"):
+            with open(grid_file, "rb") as f:
+                grids[grid_file.stem] = pickle.load(f)
+
+        grid_path = DATA_LOC / "wsj" / "viz_grids_data.pkl"
+        with open(grid_path, "wb") as f:
+            pickle.dump(grids, f)
+        print(f"Grids: {grid_path} ({grid_path.stat().st_size / 1e9:.2f} GB)")
+
+    cnn_export = {
         "geo": {
             "transmission_lines": df_lines,
             "substations": df_substations,
-            "vulnerable_substations": mean_vuln_all,  # sub_id, scenario, failure_prob
+            "substations_gdf": ss_gdf_pkl,
+            "vulnerable_substations": mean_vuln_all,
+            "gnd_gic_ds": ds,
         },
         "fields": {
             "mt_coords": mt_coords,
@@ -2871,9 +2956,9 @@ if __name__ == "__main__":
             "confidence_intervals": confidence_df,
         },
         "spatial_risk": {
-            "substation_risk": substation_risk,  # sub_id, POP20, GDP_*, EST_*, failure_prob_*
-            "voronoi_polygons": voronoi_gdf,  # substation service areas
-            "aggregate_gdf": aggregate_gdf,  # raw dasymetric allocation
+            "substation_risk": substation_risk,
+            "voronoi_polygons": voronoi_gdf,
+            "aggregate_gdf": aggregate_gdf,
         },
         "metadata": {
             "scenarios": list(vuln_pivot.columns.drop("sub_id")),
@@ -2893,22 +2978,9 @@ if __name__ == "__main__":
         },
     }
 
-    export_dir = DATA_LOC / "wsj"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    export_path = export_dir / "viz_export_data.pkl"
-    with open(export_path, "wb") as f:
-        pickle.dump(export_data, f)
-
-    print(f"Exported: {export_path} ({export_path.stat().st_size / 1e6:.1f} MB)")
-
-    EXPORT_GRIDS = True
-    if EXPORT_GRIDS:
-        grids = {}
-        for grid_file in (DATA_LOC / "viz_data").glob("grid_*.pkl"):
-            with open(grid_file, "rb") as f:
-                grids[grid_file.stem] = pickle.load(f)
-
-        grid_path = DATA_LOC / "wsj" / "viz_grids_data.pkl"
-        with open(grid_path, "wb") as f:
-            pickle.dump(grids, f)
-        print(f"Grids: {grid_path} ({grid_path.stat().st_size / 1e9:.2f} GB)")
+    cnn_dir = DATA_LOC / "cnn"
+    cnn_dir.mkdir(parents=True, exist_ok=True)
+    cnn_path = cnn_dir / "viz_export_data.pkl"
+    with open(cnn_path, "wb") as f:
+        pickle.dump(cnn_export, f)
+    print(f"CNN exported: {cnn_path} ({cnn_path.stat().st_size / 1e6:.1f} MB)")

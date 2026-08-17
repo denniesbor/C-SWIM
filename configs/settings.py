@@ -39,7 +39,7 @@ ALPHA_BETA_GIC_FILE = (
 LEAVE_OUT_SITES = ["GUA", "HON"]  # ALE is closed
 P_TRAFO_BD = 0.01
 cut_off_volt = 160
-USE_OLD_SUB_DATA = True  # Use OSM data as of the Gannon storm
+USE_OLD_SUB_DATA = False  # Full current OSM. The 2024 snapshot under-mapped substations in the PNW and NY.
 
 IPOPT_EXEC = (
     "/home/pve_ubuntu/miniconda3/envs/spw-env/bin/ipopt"  # Update for your system
@@ -294,6 +294,8 @@ def setup_matplotlib():
         {
             "font.family": "serif",
             "font.serif": ["Times New Roman"],
+            "font.size": 10,
+            "axes.labelsize": 9,
             "mathtext.fontset": "custom",
             "mathtext.rm": "Times New Roman",
             "mathtext.it": "Times New Roman:italic",
