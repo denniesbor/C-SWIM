@@ -23,8 +23,8 @@ logger = setup_logger(log_file="logs/plot_tva_gic.log")
 
 setup_matplotlib()
 
-FONTSIZE_MAIN = 11
-FONTSIZE_INFO = 9
+FONTSIZE_MAIN = 12
+FONTSIZE_INFO = 11
 C_MEASURED = "#E69F00"
 C_MODELED = "black"
 

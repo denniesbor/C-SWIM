@@ -86,7 +86,8 @@ ax.plot(x_med, y_tva, color=C_TVA, linewidth=1.5, linestyle="--",
 ax.fill_betweenx(y_tva, x_p5, x_p95, color=C_TVA, alpha=0.25,
                  label="TVA 5-95% across runs")
 
-ax.axvline(uiuc_p95, color=C_UIUC, linewidth=0.8, linestyle=":", alpha=0.7)
+ax.axvline(uiuc_p95, color=C_UIUC, linewidth=0.8, linestyle=":", alpha=0.7,
+           label=f"UIUC150 p95 = {uiuc_p95:.1f} A")
 ax.axvline(ens_p95, color=C_TVA, linewidth=0.9, linestyle=":",
            label=f"TVA ens. median p95 = {ens_p95:.1f} A")
 
